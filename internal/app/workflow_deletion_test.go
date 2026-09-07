@@ -174,3 +174,49 @@ func TestAbortRejectsInterruptedPVCIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestDeletionSpecConflictStopsBeforeRecovery(t *testing.T) {
+	for _, test := range []struct {
+		operation domain.Operation
+		phases    []domain.Phase
+	}{
+		{domain.OperationMigrate, []domain.Phase{domain.PhaseActivating, domain.PhaseRollingBack}},
+		{domain.OperationRename, []domain.Phase{domain.PhaseRenaming, domain.PhaseRollingBack}},
+		{domain.OperationMove, []domain.Phase{domain.PhaseMoving, domain.PhaseRollingBack}},
+	} {
+		for _, phase := range test.phases {
+			for _, failed := range []bool{false, true} {
+				session := appTestSession()
+				setSessionOperation(session, test.operation)
+				session.Deleting = true
+				session.BackendUID = "workflow-uid"
+				session.Generation = 2
+				session.Status.ObservedGeneration = 1
+
+				session.Status.Phase = phase
+				if failed {
+					session.Status.Phase = domain.PhaseFailed
+					session.Status.ResumeFrom = phase
+				}
+
+				latest := *session
+				latest.Generation++
+				store := &deletionStore{latest: &latest}
+				client := fake.NewClientset()
+				service := NewService(client, store, nil, nil, nil, nil, Config{})
+
+				err := service.FinalizeDeletedWorkflow(t.Context(), session)
+				if domain.CategoryOf(err) != domain.ErrorConflict || store.updates != 0 ||
+					store.deletes != 0 || len(client.Actions()) != 0 || session.Generation != 2 {
+					t.Fatalf(
+						"operation=%s phase=%s failed=%v: recovery ran after conflict: %v",
+						test.operation,
+						phase,
+						failed,
+						err,
+					)
+				}
+			}
+		}
+	}
+}
