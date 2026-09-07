@@ -42,6 +42,18 @@ func (s *Service) FinalizeDeletedWorkflow(ctx context.Context, session *domain.S
 			)
 		}
 
+		// The caller validated this generation before acquiring the Lease.
+		// Keep its snapshot on conflict so error reporting cannot acknowledge
+		// a concurrently changed spec using the newly read resourceVersion.
+		if latest.Generation != session.Generation ||
+			latest.Spec.SessionNamespace != session.Spec.SessionNamespace {
+			return domain.NewError(
+				domain.ErrorConflict,
+				"finalize workflow",
+				"workflow spec changed while acquiring its lock; retry reconciliation",
+			)
+		}
+
 		*session = *latest
 		if err := s.verifyBackupToolsStopped(ctx, session); err != nil {
 			return err

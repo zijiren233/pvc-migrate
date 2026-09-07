@@ -993,6 +993,16 @@ func TestCleanupSingleStageSessionsRemovesDestinationAndFinalizesSource(t *testi
 }
 
 func TestDeletedCompletedCopyPreservesOutputAndFinalizesSession(t *testing.T) {
+	for _, change := range []string{"none", "status", "policy", "session-namespace"} {
+		t.Run(change, func(t *testing.T) {
+			testDeletedCompletedCopy(t, change)
+		})
+	}
+}
+
+func testDeletedCompletedCopy(t *testing.T, change string) {
+	t.Helper()
+
 	ctx := context.Background()
 	session := appTestSession()
 	setSessionOperation(session, domain.OperationCopy)
@@ -1042,7 +1052,30 @@ func TestDeletedCompletedCopyPreservesOutputAndFinalizesSession(t *testing.T) {
 	}
 	client := fake.NewClientset(sourcePVC, destinationPVC, sourcePV, destinationPV)
 	session.Deleting = true
-	store := &deletionStore{latest: session}
+	session.BackendUID = "workflow-uid"
+	session.Generation = 2
+	session.Status.ObservedGeneration = 1
+	session.ResourceVersion = "10"
+	latest := *session
+	latest.Spec = *session.Spec.DeepCopy()
+	latest.Status = *session.Status.DeepCopy()
+
+	switch change {
+	case "status":
+		latest.ResourceVersion = "11"
+		latest.Status.Message = "new checkpoint"
+		latest.Status.ObservedGeneration = 2
+	case "policy":
+		latest.ResourceVersion = "11"
+		latest.Generation++
+		latest.Spec.Volumes[0].SourceReclaimPolicy = corev1.PersistentVolumeReclaimRetain
+	case "session-namespace":
+		latest.ResourceVersion = "11"
+		latest.Generation++
+		latest.Spec.SessionNamespace = "changed-session"
+	}
+
+	store := &deletionStore{latest: &latest}
 	service := &Service{client: client, store: store}
 	options := CleanupOptions{Finalize: true, DeleteSession: true}
 
@@ -1050,8 +1083,18 @@ func TestDeletedCompletedCopyPreservesOutputAndFinalizesSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := service.FinalizeDeletedWorkflow(ctx, session); err != nil {
+	err := service.FinalizeDeletedWorkflow(ctx, session)
+	if change == "policy" || change == "session-namespace" {
+		assertDeletionSnapshotRejected(t, session, store, client, err)
+		return
+	}
+
+	if err != nil {
 		t.Fatal(err)
+	}
+
+	if change == "status" && session.Status.Message != "new checkpoint" {
+		t.Fatal("finalization did not use the latest status")
 	}
 
 	for _, ref := range []domain.ObjectReference{session.Spec.Volumes[0].SourcePVC, session.Spec.Volumes[0].DestinationPVC} {
@@ -1102,8 +1145,34 @@ func TestDeletedCompletedCopyPreservesOutputAndFinalizesSession(t *testing.T) {
 		t.Fatalf("idempotent validation: %v", err)
 	}
 
+	store.latest = session
 	if err := service.FinalizeDeletedWorkflow(ctx, session); err != nil {
 		t.Fatalf("idempotent cleanup: %v", err)
+	}
+}
+
+func assertDeletionSnapshotRejected(
+	t *testing.T,
+	session *domain.Session,
+	store *deletionStore,
+	client *fake.Clientset,
+	err error,
+) {
+	t.Helper()
+
+	if domain.CategoryOf(err) != domain.ErrorConflict {
+		t.Fatalf("expected generation conflict, got %v", err)
+	}
+
+	if store.updates != 0 || store.deletes != 0 || session.Generation != 2 ||
+		session.ResourceVersion != "10" || session.Status.ObservedGeneration != 1 {
+		t.Fatal("rejected snapshot changed workflow checkpoint or removed protection")
+	}
+
+	for _, action := range client.Actions() {
+		if action.GetVerb() != "get" && action.GetVerb() != "list" {
+			t.Fatalf("rejected snapshot mutated storage: %v", action)
+		}
 	}
 }
 
