@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/labring-sigs/pvc-migrate/internal/domain"
 	"github.com/labring-sigs/pvc-migrate/internal/kube"
@@ -30,6 +31,20 @@ func (s *Service) FinalizeDeletedWorkflow(ctx context.Context, session *domain.S
 			session.ID,
 			session.BackendResource,
 		)
+		if kube.IsSessionNotFound(err) {
+			// Another deletion worker can finish before this worker acquires
+			// the Lease. Remove the lock it just recreated for the absent CR.
+			held, ok := ctx.Value(sessionLockContextKey{}).(heldSessionLock)
+			if !ok {
+				return err
+			}
+
+			deleteCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+
+			return held.lock.Delete(deleteCtx)
+		}
+
 		if err != nil {
 			return err
 		}

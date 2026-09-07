@@ -2,19 +2,23 @@ package app
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/labring-sigs/pvc-migrate/internal/domain"
 	"github.com/labring-sigs/pvc-migrate/internal/kube"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 type deletionStore struct {
 	memoryStore
 	latest *domain.Session
+	getErr error
 }
 
 func (*deletionStore) StorageBackend() string { return kube.SessionBackendCRD }
@@ -25,7 +29,78 @@ func (s *deletionStore) GetByKind(
 	string,
 	domain.ControllerKind,
 ) (*domain.Session, error) {
-	return s.latest, nil
+	return s.latest, s.getErr
+}
+
+type vanishedDeletionStore struct {
+	deletionStore
+	lock *vanishedDeletionLock
+}
+
+func (s *vanishedDeletionStore) AcquireSessionLock(
+	context.Context,
+	string,
+	string,
+) (kube.SessionLock, error) {
+	return s.lock, nil
+}
+
+type vanishedDeletionLock struct {
+	fakeSessionLock
+	deletes   int
+	deleteErr error
+}
+
+func (l *vanishedDeletionLock) Delete(context.Context) error {
+	l.deletes++
+	return l.deleteErr
+}
+
+func TestDeletionRemovesLockWhenWorkflowDisappears(t *testing.T) {
+	missing := apierrors.NewNotFound(
+		schema.GroupResource{Group: "migrate.sealos.io", Resource: "copies"},
+		"gone",
+	)
+	unavailable := errors.New("API unavailable")
+
+	deleteFailure := errors.New("Lease deletion failed")
+	for _, test := range []struct {
+		name      string
+		readErr   error
+		deleteErr error
+		wantErr   error
+		deletes   int
+	}{
+		{"already deleted", missing, nil, nil, 1},
+		{"delete failure", missing, deleteFailure, deleteFailure, 1},
+		{"read failure", unavailable, nil, unavailable, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			lock := &vanishedDeletionLock{deleteErr: test.deleteErr}
+			store := &vanishedDeletionStore{
+				deletionStore: deletionStore{getErr: test.readErr},
+				lock:          lock,
+			}
+			client := fake.NewClientset()
+			service := NewService(client, store, nil, nil, nil, nil, Config{})
+			session := appTestSession()
+			session.Deleting = true
+
+			err := service.FinalizeDeletedWorkflow(t.Context(), session)
+			if !errors.Is(err, test.wantErr) || lock.deletes != test.deletes ||
+				len(client.Actions()) != 0 ||
+				store.updates != 0 ||
+				store.deletes != 0 {
+				t.Fatalf(
+					"err=%v lock deletes=%d store=%+v actions=%v",
+					err,
+					lock.deletes,
+					store.deletionStore,
+					client.Actions(),
+				)
+			}
+		})
+	}
 }
 
 func (*deletionStore) CheckWorkflowNameCollision(
