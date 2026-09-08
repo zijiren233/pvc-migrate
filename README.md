@@ -608,9 +608,9 @@ pvc-migrate --kubeconfig /path/to/kubeconfig \
   --path mysql/current
 ```
 
-By default, restore requires an existing destination PVC. To create the PVC, use `--create-pvc`,
-`--destination-storage-class`, and `--destination-access-mode`. Automatic creation uses the backup
-capacity by default. `--destination-capacity` can increase the capacity and cannot decrease it. Use
+By default, restore requires an existing destination PVC. To create the PVC, use `--create-pvc` and
+`--destination-storage-class`. Automatic creation uses the backup capacity and `ReadWriteOnce` by
+default; `--destination-access-mode` selects another mode. `--destination-capacity` can increase the capacity and cannot decrease it. Use
 `--target-node` when a local or `WaitForFirstConsumer` volume must bind on a selected node. A failed
 restore keeps its automatically created PVC for a retry with the same recovery-point parameters.
 Restore rejects a same-named PVC from another restore.

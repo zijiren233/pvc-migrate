@@ -70,7 +70,7 @@ func TestDestinationPVCNameTrimsTruncatedDNSBoundaries(t *testing.T) {
 		"pod-data-a",
 		0,
 	)
-	if name != "pod-data-a-migrated-pod-full-v2" {
+	if !strings.HasPrefix(name, "pod-data-a-migrated-pod-full-v2-") {
 		t.Fatalf("name=%q", name)
 	}
 
@@ -89,6 +89,31 @@ func TestDestinationPVCNameTrimsTruncatedDNSBoundaries(t *testing.T) {
 	); len(problems) != 0 ||
 		strings.HasSuffix(long, "-") {
 		t.Fatalf("long name=%q problems=%v", long, problems)
+	}
+}
+
+func TestDestinationPVCNamesKeepTruncatedIdentitiesDistinct(t *testing.T) {
+	for _, test := range []struct {
+		name, namespaceA, namespaceB, sourceA, sourceB, sessionA, sessionB string
+	}{
+		{"session suffix", "app", "app", "data", "data", "copy-nightly-001", "copy-nightly-002"},
+		{"source suffix", "app", "app", strings.Repeat("a", 250) + "1", strings.Repeat("a", 250) + "2", "copy", "copy"},
+		{"source namespace", "app", "other", "data", "data", "copy", "copy"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			first := planOptions{SessionID: test.sessionA, SourceNamespace: test.namespaceA}
+			second := planOptions{SessionID: test.sessionB, SourceNamespace: test.namespaceB}
+			a := destinationPVCNameFor(first, nil, test.sourceA, 0)
+			b := destinationPVCNameFor(second, nil, test.sourceB, 0)
+
+			if a == b {
+				t.Fatalf("distinct identities share destination %q", a)
+			}
+
+			if a != destinationPVCNameFor(first, nil, test.sourceA, 0) {
+				t.Fatal("destination name is not stable across repeated planning")
+			}
+		})
 	}
 }
 

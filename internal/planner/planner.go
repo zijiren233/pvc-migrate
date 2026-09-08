@@ -2,6 +2,7 @@ package planner
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -2635,6 +2636,12 @@ func destinationPVCNameFor(options planOptions, mapped []string, source string, 
 	if suffix == "" {
 		suffix = "session"
 	}
+
+	// Keep truncated task and PVC names distinct while preserving stable retries.
+	digest := sha256.Sum256(
+		[]byte(options.SourceNamespace + "/" + source + "/" + options.SessionID),
+	)
+	suffix = fmt.Sprintf("%s-%x", suffix, digest[:5])
 
 	maxSource := 253 - len(suffix) - len("-migrated-")
 	if len(source) > maxSource {
