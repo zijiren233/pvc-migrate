@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/labring-sigs/pvc-migrate/internal/domain"
 	"github.com/labring-sigs/pvc-migrate/internal/kube"
+	"github.com/spf13/cobra"
 )
 
 type copyLookupStore struct {
@@ -166,6 +168,53 @@ func TestGetCopySessionReturnsCopyWithoutFallback(t *testing.T) {
 	}
 }
 
+func TestAdoptReservedSessionPreservesOmittedCopySettings(t *testing.T) {
+	for _, args := range [][]string{nil, {"--delete-extraneous=false"}, {"--delete-extraneous=true", "--verify-checksum=false"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			options := domain.SessionWorkflowOptions{
+				SourceNode:       "source-a",
+				Strategies:       []string{domain.StrategyMount},
+				VerifyChecksum:   true,
+				DeleteExtraneous: false,
+			}
+			session := domain.NewSession(
+				"reserved",
+				domain.NewSessionSpec(
+					domain.OperationReserve,
+					domain.SessionCommon{SessionNamespace: "tenant"},
+					false,
+					options,
+				),
+				time.Now(),
+			)
+			flags := &copyFlags{}
+			cmd := &cobra.Command{}
+			flags.bind(cmd)
+
+			if err := cmd.ParseFlags(args); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := adoptReservedSessionForCopy(cmd, session, flags); err != nil {
+				t.Fatal(err)
+			}
+
+			want := options
+			if cmd.Flags().Changed("delete-extraneous") {
+				want.DeleteExtraneous = flags.deleteExtraneous
+			}
+
+			if cmd.Flags().Changed("verify-checksum") {
+				want.VerifyChecksum = flags.verifyChecksum
+			}
+
+			if got := session.Spec.WorkflowOptions(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("reserved settings changed: got %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
 func TestAdoptReservedSessionResolvesAutoStrategies(t *testing.T) {
 	session := domain.NewSession(
 		"reserved",
@@ -183,6 +232,7 @@ func TestAdoptReservedSessionResolvesAutoStrategies(t *testing.T) {
 	)
 
 	err := adoptReservedSessionForCopy(
+		&cobra.Command{},
 		session,
 		&copyFlags{strategies: []string{domain.StrategyAuto}},
 	)

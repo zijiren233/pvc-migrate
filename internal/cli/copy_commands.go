@@ -29,17 +29,32 @@ func getCopySession(
 // adoptReservedSessionForCopy is the explicit hand-off from the standalone
 // reserve command to copy. The conversion lives in copy's command module so
 // reserve and copy do not share a mixed command/flag implementation.
-func adoptReservedSessionForCopy(session *domain.Session, flags *copyFlags) error {
+func adoptReservedSessionForCopy(
+	cmd *cobra.Command,
+	session *domain.Session,
+	flags *copyFlags,
+) error {
 	if session.Spec.Type == domain.SessionTypeReserve {
 		options := session.Spec.WorkflowOptions()
-		options.SourceNode = flags.sourceNode
-		options.Strategies = planner.ResolveStrategies(
-			session.Spec.SourceNamespace,
-			session.Spec.DestinationNamespace,
-			flags.strategies,
-		)
-		options.VerifyChecksum = flags.verifyChecksum
-		options.DeleteExtraneous = flags.deleteExtraneous
+		if cmd.Flags().Changed("source-node") {
+			options.SourceNode = flags.sourceNode
+		}
+
+		if cmd.Flags().Changed("strategy") || len(options.Strategies) == 0 {
+			options.Strategies = planner.ResolveStrategies(
+				session.Spec.SourceNamespace,
+				session.Spec.DestinationNamespace,
+				flags.strategies,
+			)
+		}
+
+		if cmd.Flags().Changed("verify-checksum") {
+			options.VerifyChecksum = flags.verifyChecksum
+		}
+
+		if cmd.Flags().Changed("delete-extraneous") {
+			options.DeleteExtraneous = flags.deleteExtraneous
+		}
 
 		session.Spec = domain.NewSessionSpec(
 			domain.OperationCopy,
@@ -125,7 +140,7 @@ func (r *rootState) newCopyCommand() *cobra.Command {
 
 				session, err = getCopySession(ctx, runtime.store, namespace, flags.sessionID)
 				if err == nil {
-					err = adoptReservedSessionForCopy(session, flags)
+					err = adoptReservedSessionForCopy(cmd, session, flags)
 				}
 
 				if err == nil {
@@ -261,7 +276,7 @@ func (r *rootState) newCopyPlanCommand() *cobra.Command {
 					)
 				}
 
-				if err := adoptReservedSessionForCopy(session, flags); err != nil {
+				if err := adoptReservedSessionForCopy(cmd, session, flags); err != nil {
 					return reportSessionError(cmd, session, err)
 				}
 

@@ -45,16 +45,11 @@ type CopySpec struct {
 
 // +kubebuilder:validation:XValidation:rule="(has(self.volumes) && size(self.volumes) > 0) || has(self.pod)",message="select source volumes or a Pod; volumes alongside a Pod are overrides"
 type ReservationSpec struct {
+	// Reservation retains these settings for a later copy of the reserved volumes.
+	TransferOptions `json:",inline"`
 	// +kubebuilder:validation:MaxItems=1024
-	Volumes                 []VolumeRequest         `json:"volumes,omitempty"`
-	Pod                     *LocalResourceReference `json:"pod,omitempty"`
-	DestinationCapacity     string                  `json:"destinationCapacity,omitempty"`
-	DestinationStorageClass string                  `json:"destinationStorageClass,omitempty"`
-	TargetNode              string                  `json:"targetNode,omitempty"`
-	// +kubebuilder:validation:Enum=auto;require;off
-	CapacityAwareness    string `json:"capacityAwareness,omitempty"`
-	AllowVolumeShrink    bool   `json:"allowVolumeShrink,omitempty"`
-	SkipSourceUsageCheck bool   `json:"skipSourceUsageCheck,omitempty"`
+	Volumes []VolumeRequest         `json:"volumes,omitempty"`
+	Pod     *LocalResourceReference `json:"pod,omitempty"`
 }
 
 type PodMigrationSpec struct {

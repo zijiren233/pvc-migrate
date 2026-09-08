@@ -54,6 +54,8 @@ spec:
                 - require
                 - "off"
                 type: string
+              deleteExtraneous:
+                type: boolean
               destinationCapacity:
                 type: string
               destinationNamespace:
@@ -63,6 +65,8 @@ spec:
                 maxLength: 63
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              destinationPath:
                 type: string
               destinationStorageClass:
                 type: string
@@ -113,8 +117,19 @@ spec:
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              sourceNode:
+                type: string
+              sourcePath:
+                type: string
+              strategies:
+                items:
+                  type: string
+                maxItems: 32
+                type: array
               targetNode:
                 type: string
+              verifyChecksum:
+                type: boolean
               volumes:
                 items:
                   description: |-

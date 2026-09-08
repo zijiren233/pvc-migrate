@@ -494,6 +494,11 @@ For multiple explicit destination names, pass `--destination-pvc source-pvc-name
 
 `reserve`, `copy`, `migrate`, and `migrate-pod` accept optional `--source-path` and `--destination-path` directory scopes. Omit both flags to copy the full PVC. Paths are relative to the PVC root, and `.` selects the root. A single-PVC operation accepts a bare path; multi-PVC operations use explicit `source-pvc-name=relative-path` mappings. Unmapped PVCs keep the full-volume scope.
 
+Continuing a reservation with `copy --session ID` retains its paths, source node,
+strategies, checksum setting, and deletion policy in both persistence modes.
+Explicit `--source-node`, `--strategy`, `--verify-checksum`, and
+`--delete-extraneous` flags override those transfer settings during the hand-off.
+
 ```bash
 pvc-migrate copy --dry-run=false \
   --source-namespace application \

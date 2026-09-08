@@ -208,6 +208,53 @@ func TestControllerSubmissionDoesNotReadSource(t *testing.T) {
 	}
 }
 
+func TestReservationSubmissionPreservesFutureCopyScopeAndSettings(t *testing.T) {
+	for _, destination := range []string{"app", "system"} {
+		t.Run(destination, func(t *testing.T) {
+			request, err := New(
+				plannerClient(),
+				nil,
+			).ForSubmission(true).
+				PlanReserve(t.Context(), ReserveOptions{
+					SessionID:            "reserved",
+					SourceNamespace:      "app",
+					DestinationNamespace: destination,
+					TemporaryNamespace:   destination,
+					SessionNamespace:     "app",
+					SourcePVCs: []string{
+						"data",
+					},
+					SourcePaths:      []string{"sub"},
+					DestinationPaths: []string{"archive"},
+					SourceNode:       "node-a",
+					Strategies:       []string{domain.StrategyMount},
+					VerifyChecksum:   true,
+					DeleteExtraneous: true,
+				})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var body map[string]any
+			if err := json.Unmarshal(request.Intent, &body); err != nil {
+				t.Fatal(err)
+			}
+
+			if body["sourcePath"] != "sub" || body["destinationPath"] != "archive" ||
+				body["sourceNode"] != "node-a" ||
+				body["verifyChecksum"] != true ||
+				body["deleteExtraneous"] != true {
+				t.Fatalf("reservation lost future copy intent: %s", request.Intent)
+			}
+
+			if got, ok := body["strategies"].([]any); !ok || len(got) != 1 ||
+				got[0] != domain.StrategyMount {
+				t.Fatalf("reservation lost copy strategy: %s", request.Intent)
+			}
+		})
+	}
+}
+
 func TestControllerSubmissionRejectsAmbiguousMappings(t *testing.T) {
 	for _, capacities := range [][]string{{"1Gi", "2Gi"}, {"1Gi", "data=2Gi"}, {"data=1Gi", "data=2Gi"}, {"data="}} {
 		_, err := New(plannerClient(), nil).ForSubmission(true).PlanCopy(t.Context(), CopyOptions{

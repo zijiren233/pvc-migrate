@@ -464,15 +464,18 @@ func TestAdoptReservedSessionBuildsCopyOwnedOptions(t *testing.T) {
 		},
 	)
 	session := domain.NewSession("reserved", spec, time.Now())
-	flags := &copyFlags{
-		sourceNode:       "source-a",
-		strategies:       []string{domain.StrategyMount},
-		online:           true,
-		verifyChecksum:   true,
-		deleteExtraneous: true,
+	flags := &copyFlags{}
+	cmd := &cobra.Command{}
+	flags.bind(cmd)
+
+	if err := cmd.ParseFlags([]string{
+		"--source-node=source-a", "--strategy=mount", "--online",
+		"--verify-checksum", "--delete-extraneous=true",
+	}); err != nil {
+		t.Fatal(err)
 	}
 
-	if err := adoptReservedSessionForCopy(session, flags); err != nil {
+	if err := adoptReservedSessionForCopy(cmd, session, flags); err != nil {
 		t.Fatal(err)
 	}
 
