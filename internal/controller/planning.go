@@ -252,9 +252,10 @@ func (r *WorkflowReconciler) deleteUnplannedWorkflow(
 		)
 	}
 
-	if err := r.store.Delete(ctx, latest); err != nil {
+	// Keep the finalizer as a retry anchor until the planning Lease is gone.
+	if err := lock.Delete(ctx); err != nil {
 		return err
 	}
 
-	return lock.Delete(ctx)
+	return r.store.Delete(ctx, latest)
 }

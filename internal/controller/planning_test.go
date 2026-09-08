@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientfake "k8s.io/client-go/kubernetes/fake"
+	clienttesting "k8s.io/client-go/testing"
 	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -359,4 +360,56 @@ func resolvedPlanningSpec(id string) domain.SessionSpec {
 	spec := newRunnerSession(id).Spec
 	spec.Volumes[0].SourcePV = domain.ObjectReference{Name: "source-pv", UID: "pv-uid"}
 	return spec
+}
+
+func TestUnplannedDeletionRetainsFinalizerUntilLeaseCleanup(t *testing.T) {
+	r, store, client, kc, request := planningFixture(t)
+
+	session, err := store.GetByKind(t.Context(), "system", "planning", domain.ControllerKindCopy)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.EnsureSessionProtection(t.Context(), session); err != nil {
+		t.Fatal(err)
+	}
+
+	object := &v1alpha1.Copy{}
+	if err := client.Get(t.Context(), request.NamespacedName, object); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.Delete(t.Context(), object); err != nil {
+		t.Fatal(err)
+	}
+
+	blocked := true
+	kc.PrependReactor("delete", "leases", func(clienttesting.Action) (bool, runtime.Object, error) {
+		if blocked {
+			return true, nil, errors.New("Lease API unavailable")
+		}
+		return false, nil, nil
+	})
+
+	if _, err := r.reconcile(t.Context(), request, domain.ControllerKindCopy); err == nil {
+		t.Fatal("expected Lease cleanup failure")
+	}
+
+	if err := client.Get(t.Context(), request.NamespacedName, object); err != nil {
+		t.Fatalf("lost cleanup retry anchor: %v", err)
+	}
+
+	if len(object.Finalizers) == 0 {
+		t.Fatal("removed finalizer before Lease cleanup")
+	}
+
+	blocked = false
+
+	if _, err := r.reconcile(t.Context(), request, domain.ControllerKindCopy); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := client.Get(t.Context(), request.NamespacedName, object); !apierrors.IsNotFound(err) {
+		t.Fatalf("cleanup retry did not delete workflow: %v", err)
+	}
 }
