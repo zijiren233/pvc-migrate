@@ -64,6 +64,7 @@ type Planner struct {
 	volumeUsageReader             kube.VolumeUsageReader
 	logger                        *slog.Logger
 	controllerSubmission          bool
+	planningWorkflow              bool
 	sessionRecords                *kube.SessionRecords
 }
 

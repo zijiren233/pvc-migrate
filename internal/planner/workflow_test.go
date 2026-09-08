@@ -46,8 +46,7 @@ func TestWorkflowPlansMinimalVolumeIntent(t *testing.T) {
 			}
 
 			for _, action := range client.Actions() {
-				if action.GetVerb() != "get" && action.GetVerb() != "list" &&
-					action.GetResource().Resource != "selfsubjectaccessreviews" {
+				if action.GetVerb() != "get" && action.GetVerb() != "list" {
 					t.Fatalf("planning mutated cluster: %v", action)
 				}
 			}

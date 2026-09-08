@@ -37,6 +37,13 @@ func (p *Planner) PlanWorkflow(
 	session *domain.Session,
 	image string,
 ) (domain.SessionSpec, error) {
+	// The request is already admitted. Keep CR-backed resource estimates,
+	// without requiring the controller to create a second workflow as a caller.
+	clone := *p
+	clone.controllerSubmission = true
+	clone.planningWorkflow = true
+	p = &clone
+
 	var input workflowInput
 	if err := json.Unmarshal(session.Intent, &input); err != nil {
 		return domain.SessionSpec{}, err

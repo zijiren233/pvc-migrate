@@ -51,14 +51,13 @@ rules:
     verbs: ["get", "list", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
-    # Transfer Pods use one project-managed no-token account. Creation cannot
-    # be name-scoped by Kubernetes RBAC, while reads and repairs can be
-    # restricted to the fixed account used by the tool chart.
-    verbs: ["create"]
+    # Planning reads the workload account's pull-secret references. Only
+    # the fixed transfer account may be repaired by the controller.
+    verbs: ["get", "create"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames: ["pvc-migrate-transfer"]
-    verbs: ["get", "update"]
+    verbs: ["update"]
   - apiGroups: [""]
     resources: ["events"]
     # Event reads support tool diagnostics; create/patch are required by
@@ -85,6 +84,15 @@ rules:
   - apiGroups: ["storage.k8s.io"]
     resources: ["storageclasses"]
     verbs: ["get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csinodes"]
+    verbs: ["get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["csistoragecapacities"]
+    verbs: ["list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["list"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["volumeattachments"]
     verbs: ["list"]
