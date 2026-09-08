@@ -4,7 +4,7 @@ Image: {{ include "pvc-migrate.image" . }}
 Transfer image: {{ include "pvc-migrate.toolImage" . }}
 
 helm status {{ .Release.Name }} --namespace {{ .Release.Namespace }}
-helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }} --logs
+helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }} --logs --timeout 10m
 kubectl logs --namespace {{ .Release.Namespace }} deployment/{{ include "pvc-migrate.fullname" . }}-controller
 
 CRDs are retained on uninstall and are not upgraded by Helm. Apply the CRDs
