@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	v1alpha1 "github.com/labring-sigs/pvc-migrate/api/v1alpha1"
@@ -19,7 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-func TestDeletionSpecConflictPreservesCheckpointAcrossRetries(t *testing.T) {
+func TestConcurrentDeletionSpecEditPreservesCheckpoint(t *testing.T) {
 	for _, timing := range []struct {
 		name string
 		read int
@@ -92,16 +91,10 @@ func TestDeletionSpecConflictPreservesCheckpointAcrossRetries(t *testing.T) {
 			r := NewWorkflowReconciler(service, store)
 
 			request := reconcile.Request{NamespacedName: crclient.ObjectKeyFromObject(object)}
-			for attempt := range 3 {
-				_, err := r.reconcile(t.Context(), request, domain.ControllerKindCopy)
-				if domain.CategoryOf(err) != domain.ErrorConflict {
-					t.Fatalf("attempt %d: expected conflict, got %v", attempt, err)
-				}
 
-				if attempt > 0 &&
-					!strings.Contains(err.Error(), "spec changed after execution started") {
-					t.Fatalf("retry did not retain generation fence: %v", err)
-				}
+			_, err := r.reconcile(t.Context(), request, domain.ControllerKindCopy)
+			if domain.CategoryOf(err) != domain.ErrorConflict {
+				t.Fatalf("expected concurrent update conflict, got %v", err)
 			}
 
 			current := &v1alpha1.Copy{}

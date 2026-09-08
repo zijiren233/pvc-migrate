@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -65,7 +64,7 @@ func TestDeletionSpecConflictLive(t *testing.T) {
 	}
 
 	if original.DeletionTimestamp == nil || original.Status.Phase != "WarmCopied" ||
-		len(original.Spec.Volumes) != 1 ||
+		original.Status.Plan == nil || len(original.Status.Plan.Volumes) != 1 ||
 		original.Spec.DestinationStorageClass == "changed-class" {
 		t.Fatal("requires deleting completed Copy with retained source")
 	}
@@ -77,7 +76,7 @@ func TestDeletionSpecConflictLive(t *testing.T) {
 	service := app.NewService(kubeClient, store, nil, nil, nil, nil, app.Config{})
 
 	r := NewWorkflowReconciler(service, store)
-	for attempt := range 3 {
+	for attempt := range 1 {
 		_, err := r.reconcile(
 			t.Context(),
 			reconcile.Request{NamespacedName: key},
@@ -85,10 +84,6 @@ func TestDeletionSpecConflictLive(t *testing.T) {
 		)
 		if domain.CategoryOf(err) != domain.ErrorConflict {
 			t.Fatalf("attempt %d: %v", attempt, err)
-		}
-
-		if attempt > 0 && !strings.Contains(err.Error(), "spec changed after execution started") {
-			t.Fatalf("retry lost fence: %v", err)
 		}
 
 		t.Logf("attempt=%d conflict=%v", attempt, err)
@@ -108,12 +103,12 @@ func TestDeletionSpecConflictLive(t *testing.T) {
 
 	pv, err := kubeClient.CoreV1().
 		PersistentVolumes().
-		Get(t.Context(), original.Spec.Volumes[0].SourcePV.Name, metav1.GetOptions{})
+		Get(t.Context(), original.Status.Plan.Volumes[0].SourcePV.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if pv.UID != original.Spec.Volumes[0].SourcePV.UID ||
+	if pv.UID != original.Status.Plan.Volumes[0].SourcePV.UID ||
 		pv.Spec.PersistentVolumeReclaimPolicy != "Retain" ||
 		pv.Labels[kube.SessionKey] != key.Name {
 		t.Fatal("source storage changed")

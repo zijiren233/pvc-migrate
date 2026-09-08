@@ -448,10 +448,10 @@ func (r *WorkflowReconciler) reconcileDeletingWorkflow(
 		return err
 	}
 
-	if err := workflowSpecMutationError(session); err != nil {
-		return err
-	}
-
+	// DecodeWorkflow uses the controller-owned status.plan once planning has
+	// completed. Later intent edits cannot retarget cleanup and must not strand
+	// the finalizer. The finalizer still revalidates identity and generation
+	// under its Lease before touching storage.
 	err := finalizer.FinalizeDeletedWorkflow(ctx, session)
 	if err == nil || kube.IsSessionLockContention(err) || ctx.Err() != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -152,13 +153,78 @@ func TestDeletingWorkflowRequiresSuccessfulFinalization(t *testing.T) {
 
 type deletionWorkflowService struct {
 	recordingWorkflowResumer
-	calls int
-	err   error
+	calls   int
+	err     error
+	session *domain.Session
 }
 
-func (s *deletionWorkflowService) FinalizeDeletedWorkflow(context.Context, *domain.Session) error {
+func (s *deletionWorkflowService) FinalizeDeletedWorkflow(
+	_ context.Context,
+	session *domain.Session,
+) error {
 	s.calls++
+	s.session = session
 	return s.err
+}
+
+func TestDeletionUsesPlannedResourcesAfterSpecEdit(t *testing.T) {
+	for _, kind := range []domain.ControllerKind{
+		domain.ControllerKindCopy, domain.ControllerKindClusterCopy,
+		domain.ControllerKindBackup, domain.ControllerKindRestore,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			object := kube.WorkflowObjectForKind(kind)
+
+			payload := `{"metadata":{"name":"changed","namespace":"system","generation":4},
+				"spec":{"sourceNamespace":"other","destinationNamespace":"other","sessionNamespace":"other",
+				"sourcePVC":{"name":"foreign"},"destinationPVC":{"name":"foreign"},"repositoryRef":{"name":"foreign"},
+				"volumes":[{"sourcePVC":{"name":"foreign"}}]},
+				"status":{"phase":"Completed","observedGeneration":1,"volumes":[{"sourcePVCName":"original"}],"plan":{
+				"sourceNamespace":"system","destinationNamespace":"system","sessionNamespace":"system",
+				"name":"point","sourcePVC":{"name":"original","uid":"original-uid"},"sourcePV":{"name":"original-pv","uid":"original-pv-uid"},"destinationPVC":{"name":"original"},"repositoryRef":{"name":"original"},
+				"volumes":[{"sourcePVC":{"name":"original","uid":"original-uid"},"sourcePV":{"name":"original-pv","uid":"original-pv-uid"},"destinationPVC":{"name":"output"}}]}}}`
+			if err := json.Unmarshal([]byte(payload), object); err != nil {
+				t.Fatal(err)
+			}
+
+			now := metav1.Now()
+			object.SetDeletionTimestamp(&now)
+
+			if domain.IsClusterControllerKind(kind) {
+				object.SetNamespace("")
+			}
+
+			session, err := kube.DecodeWorkflow(object)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			service := &deletionWorkflowService{}
+
+			reconciler := NewWorkflowReconciler(service, &runnerSessionStore{latest: session})
+			if err := reconciler.reconcileDeletingWorkflow(
+				t.Context(),
+				reconcile.Request{},
+				session,
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			if service.calls != 1 || service.session.Spec.SessionNamespace != "system" {
+				t.Fatalf("finalization not called with planned namespace: %+v", service.session)
+			}
+
+			resolved, err := json.Marshal(service.session.Spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if strings.Contains(string(resolved), "foreign") ||
+				strings.Contains(string(resolved), `"other"`) {
+				t.Fatalf("changed spec retargeted finalization: %s", resolved)
+			}
+		})
+	}
 }
 
 func TestFailedWorkflowWaitsForResumeEventWithoutPolling(t *testing.T) {

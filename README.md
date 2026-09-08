@@ -157,6 +157,10 @@ removes the unexecuted request without touching source storage. This API replace
 the previous execution-snapshot spec format; existing requests must be completed
 and cleaned up before upgrading the CRDs.
 
+Deleting a planned workflow always uses its fixed `status.plan`, including
+after an unsupported spec edit. Cleanup cannot be redirected by that edit and
+still checks resource identities, consumers, and concurrent changes under a Lease.
+
 Backup and restore use a namespaced `BackupRepository` for a user-selected
 location. `spec.type` selects a structured backend configuration. `s3` is
 currently executable and reads its credentials from a Secret in the repository
