@@ -496,6 +496,15 @@ func (s *CRDSessionStore) create(ctx context.Context, session *domain.Session, d
 	}
 
 	if len(session.Intent) > 0 {
+		// Decode into a fresh spec: JSON merging reuses slice elements and can
+		// retain identity constraints manufactured by the domain projection.
+		request := WorkflowObjectForKind(workflowCRDKindForSession(session))
+		request.SetName(object.GetName())
+		request.SetNamespace(object.GetNamespace())
+		request.SetLabels(object.GetLabels())
+		request.SetFinalizers(object.GetFinalizers())
+		object = request
+
 		data, err := json.Marshal(map[string]json.RawMessage{"spec": session.Intent})
 		if err != nil {
 			return err
