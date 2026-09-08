@@ -303,6 +303,11 @@ func TestRestorePlanningPinsExistingDestinationAndHonorsConstraints(t *testing.T
 			if err == nil && test.existing && spec.Restore.DestinationPVC.UID != "pvc-uid" {
 				t.Fatal("resolved UID not pinned")
 			}
+
+			if err == nil && test.create &&
+				spec.Restore.DestinationAccessMode != string(corev1.ReadWriteOnce) {
+				t.Fatal("restore PVC creation did not resolve the default access mode")
+			}
 		})
 	}
 }

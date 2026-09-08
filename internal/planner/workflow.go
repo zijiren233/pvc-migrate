@@ -9,6 +9,7 @@ import (
 	v1alpha1 "github.com/labring-sigs/pvc-migrate/api/v1alpha1"
 	"github.com/labring-sigs/pvc-migrate/internal/domain"
 	"github.com/labring-sigs/pvc-migrate/internal/kube"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -295,6 +296,9 @@ func (p *Planner) planRepositoryWorkflow(
 		spec.Backup.ToolImage = image
 	} else if spec.Restore != nil {
 		spec.Restore.ToolImage = image
+		if spec.Restore.CreatePVC && spec.Restore.DestinationAccessMode == "" {
+			spec.Restore.DestinationAccessMode = string(corev1.ReadWriteOnce)
+		}
 
 		pvc, err := p.client.CoreV1().
 			PersistentVolumeClaims(spec.SourceNamespace).

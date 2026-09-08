@@ -143,6 +143,11 @@ before any data-plane action. Runtime checkpoints remain in the other status
 fields. The CLI submits the same concise spec; local discovery remains available
 through `plan`, `--dry-run`, and session mode.
 
+For `Restore` with `createPVC: true`, specify the destination storage class;
+capacity comes from the published backup manifest and access mode defaults to
+`ReadWriteOnce`. Set `destinationAccessMode` explicitly for a different mode.
+The controller records the resolved defaults in `status.plan`.
+
 A discovery failure records `Failed` and `Planned=False`, with a message and
 event. Correcting the spec retries discovery while no plan exists; an explicit
 CLI `resume` retries the same intent. Once `status.plan` exists, spec changes

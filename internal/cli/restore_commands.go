@@ -7,6 +7,7 @@ import (
 	"github.com/labring-sigs/pvc-migrate/internal/kube"
 	"github.com/labring-sigs/pvc-migrate/internal/objectstore"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 )
 
 type restoreBucketFlags struct {
@@ -268,7 +269,7 @@ func bindRestoreBucketFlags(command *cobra.Command, flags *restoreBucketFlags) {
 	command.Flags().
 		StringVar(&flags.destinationStorageClass, "destination-storage-class", "", "StorageClass for a destination PVC created by restore")
 	command.Flags().
-		StringVar(&flags.destinationAccessMode, "destination-access-mode", "", "Access mode for a destination PVC created by restore")
+		StringVar(&flags.destinationAccessMode, "destination-access-mode", string(corev1.ReadWriteOnce), "Access mode for a destination PVC created by restore")
 	command.Flags().
 		StringVar(&flags.destinationCapacity, "destination-capacity", "", "Capacity for a destination PVC created by restore; defaults to the backup capacity")
 	command.Flags().
