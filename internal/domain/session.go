@@ -1367,6 +1367,10 @@ func (s *Session) Reactivate(message string, now time.Time) error {
 		return NewError(ErrorPrecondition, "reactivate", "failed session has no resume checkpoint")
 	}
 
+	if err := s.ValidateRetryableFailure(); err != nil {
+		return err
+	}
+
 	t := metav1.NewTime(now.UTC())
 	s.Status.Phase = s.Status.ResumeFrom
 	s.Status.FailureReason = ""
@@ -1383,6 +1387,25 @@ func (s *Session) Reactivate(message string, now time.Time) error {
 	trimWorkflowHistory(&s.Status)
 
 	return nil
+}
+
+// ValidateRetryableFailure rejects failures that require a new execution plan.
+func (s *Session) ValidateRetryableFailure() error {
+	if s == nil || s.Status.Phase != PhaseFailed ||
+		s.Status.FailureReason != FailureDestinationCapacityExhausted {
+		return nil
+	}
+
+	message := "destination capacity was exhausted and cannot be changed in this session; abort and clean up this session, then create a new session with a larger --destination-capacity"
+	if kubeblocks, ok := s.Spec.KubeBlocksPodMigration(); ok {
+		message = fmt.Sprintf(
+			"destination capacity was exhausted for KubeBlocks Cluster %s component %s; update the component volumeClaimTemplates storage request, abort and clean up this session, then create a new migrate-pod session",
+			kubeblocks.Cluster,
+			kubeblocks.Component,
+		)
+	}
+
+	return NewError(ErrorConflict, "resume session", message)
 }
 
 func (s *Session) SetCondition(condition Condition) {

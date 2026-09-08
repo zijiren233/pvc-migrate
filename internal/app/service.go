@@ -568,25 +568,7 @@ func failureReason(err error) domain.SessionFailureReason {
 }
 
 func validateRetryableSessionFailure(session *domain.Session) error {
-	if session != nil && session.Status.Phase == domain.PhaseFailed &&
-		session.Status.FailureReason == domain.FailureDestinationCapacityExhausted {
-		message := "destination capacity was exhausted and cannot be changed in this session; abort and clean up this session, then create a new session with a larger --destination-capacity"
-		if kubeblocks, ok := session.Spec.KubeBlocksPodMigration(); ok {
-			message = fmt.Sprintf(
-				"destination capacity was exhausted for KubeBlocks Cluster %s component %s; update the component volumeClaimTemplates storage request, abort and clean up this session, then create a new migrate-pod session",
-				kubeblocks.Cluster,
-				kubeblocks.Component,
-			)
-		}
-
-		return domain.NewError(
-			domain.ErrorConflict,
-			"resume session",
-			message,
-		)
-	}
-
-	return nil
+	return session.ValidateRetryableFailure()
 }
 
 func (s *Service) persist(ctx context.Context, session *domain.Session) error {
