@@ -37,6 +37,7 @@ import (
 // WorkflowReconciler bridges every operation-specific workflow Kind to the
 // existing service state machine.
 type WorkflowReconciler struct {
+	planner          WorkflowPlanner
 	store            kube.ControllerSessionStore
 	service          workflowResumer
 	kubeClient       kubernetes.Interface
@@ -286,21 +287,17 @@ func (r *WorkflowReconciler) reconcile(
 		return reconcile.Result{}, err
 	}
 
+	if session.PlanPending {
+		return r.reconcilePlanning(ctx, session)
+	}
+
 	// A workflow's spec is the authorization and execution input. Once the
 	// controller has observed a generation, changing that input would let a
 	// tenant retarget an in-flight operation (for example to another recovery
 	// point or backup repository). CRD status updates do not change
 	// generation, so this check does not interfere with normal progress.
 	if err := workflowSpecMutationError(session); err != nil {
-		if !terminalSession(session) {
-			runner := r.runner(request.Namespace)
-			return r.checkpointBusinessFailure(ctx, runner, session, err, request)
-		}
-
-		ctrl.LoggerFrom(ctx).
-			Info("ignored spec change for terminal workflow", "workflow", request.NamespacedName, "reason", err)
-
-		return reconcile.Result{}, nil
+		return r.reconcileChangedSpec(ctx, session, err, request)
 	}
 
 	// Declarative CRs do not pass through CRDSessionStore.Create, so they may
@@ -365,6 +362,28 @@ func (r *WorkflowReconciler) reconcile(
 	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
 }
 
+func (r *WorkflowReconciler) reconcileChangedSpec(
+	ctx context.Context,
+	session *domain.Session,
+	cause error,
+	request reconcile.Request,
+) (reconcile.Result, error) {
+	if !terminalSession(session) {
+		return r.checkpointBusinessFailure(
+			ctx,
+			r.runner(request.Namespace),
+			session,
+			cause,
+			request,
+		)
+	}
+
+	ctrl.LoggerFrom(ctx).
+		Info("ignored spec change for terminal workflow", "workflow", request.NamespacedName, "reason", cause)
+
+	return reconcile.Result{}, nil
+}
+
 func (r *WorkflowReconciler) checkpointBusinessFailure(
 	ctx context.Context,
 	runner *Runner,
@@ -410,6 +429,10 @@ func (r *WorkflowReconciler) reconcileDeletingWorkflow(
 ) error {
 	// Execution cannot start before the controller persists its first trusted
 	// checkpoint. Such objects need neither a Lease nor data-plane cleanup.
+	if session.PlanPending {
+		return r.deleteUnplannedWorkflow(ctx, session)
+	}
+
 	if session.Status.ObservedGeneration == 0 {
 		return r.store.Delete(ctx, session)
 	}
@@ -637,6 +660,7 @@ func workflowStatus(object crclient.Object) v1alpha1.WorkflowStatus {
 }
 
 type ManagerOptions struct {
+	Planner                       WorkflowPlanner
 	Namespace                     string
 	KubernetesClient              kubernetes.Interface
 	OpenEBSLVMSharedVolumeManager kube.OpenEBSLVMSharedVolumeManager
@@ -772,6 +796,7 @@ func StartManager(
 	}
 
 	reconciler := NewWorkflowReconciler(service, store).
+		WithPlanner(options.Planner).
 		WithLogger(logger.With("component", "workflow-controller")).
 		// Repository reads use the uncached API reader so deletion, replacement,
 		// and credential changes fail closed immediately.
@@ -844,4 +869,27 @@ func workflowSpecMutationError(session *domain.Session) error {
 		"controller reconcile",
 		"workflow spec changed after execution started; create a new workflow instead",
 	)
+}
+
+func (r *WorkflowReconciler) reconcilePlanning(
+	ctx context.Context,
+	session *domain.Session,
+) (reconcile.Result, error) {
+	if session.Status.Phase == domain.PhaseAborted ||
+		(terminalSession(session) && session.Status.ObservedGeneration == session.Generation) {
+		return reconcile.Result{}, nil
+	}
+
+	if err := r.store.EnsureSessionProtection(ctx, session); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	if err := r.planWorkflow(ctx, session); err != nil {
+		if kube.IsSessionLockContention(err) {
+			return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+		}
+		return reconcile.Result{}, err
+	}
+
+	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
 }

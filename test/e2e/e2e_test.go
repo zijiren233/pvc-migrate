@@ -528,7 +528,7 @@ func TestWorkflowScopeAdmissionAndStatusMatrix(t *testing.T) {
 			"sessionNamespace":     namespace,
 		}
 	}
-	merge := func(base map[string]any, values map[string]any) map[string]any {
+	merge := func(base, values map[string]any) map[string]any {
 		for key, value := range values {
 			base[key] = value
 		}
@@ -546,7 +546,7 @@ func TestWorkflowScopeAdmissionAndStatusMatrix(t *testing.T) {
 			spec: map[string]any{
 				"volumes":       []any{validVolume()},
 				"precopyPasses": int64(0),
-				"workload":      validWorkload(),
+				"pod":           validWorkload()["pod"],
 			},
 		},
 		{resource: "reservations", kind: "Reservation", volumes: true, spec: map[string]any{
@@ -581,7 +581,7 @@ func TestWorkflowScopeAdmissionAndStatusMatrix(t *testing.T) {
 			spec: merge(clusterPodNamespaces(), map[string]any{
 				"volumes":       []any{validVolume()},
 				"precopyPasses": int64(0),
-				"workload":      validWorkload(),
+				"pod":           validWorkload()["pod"],
 			}),
 		},
 		{
@@ -602,7 +602,8 @@ func TestWorkflowScopeAdmissionAndStatusMatrix(t *testing.T) {
 				"sourceNamespace":      namespace,
 				"destinationNamespace": namespace,
 				"sessionNamespace":     namespace,
-				"identity":             localIdentity(),
+				"sourcePVC":            localIdentity()["sourcePVC"],
+				"destinationPVC":       localIdentity()["destinationPVC"],
 			},
 		},
 		{
@@ -611,7 +612,8 @@ func TestWorkflowScopeAdmissionAndStatusMatrix(t *testing.T) {
 				"sourceNamespace":      namespace,
 				"destinationNamespace": namespace + "-destination",
 				"sessionNamespace":     namespace,
-				"identity":             localIdentity(),
+				"sourcePVC":            localIdentity()["sourcePVC"],
+				"destinationPVC":       localIdentity()["destinationPVC"],
 			},
 		},
 	}
@@ -656,7 +658,11 @@ func TestWorkflowScopeAdmissionAndStatusMatrix(t *testing.T) {
 					"spec",
 					"sourceNamespace",
 				); nestedErr != nil || found {
-					t.Fatalf("namespaced namespace selector was not pruned: found=%t err=%v", found, nestedErr)
+					t.Fatalf(
+						"namespaced namespace selector was not pruned: found=%t err=%v",
+						found,
+						nestedErr,
+					)
 				}
 			}
 			if test.kind == "ClusterPodMigration" {
@@ -750,8 +756,13 @@ func TestWorkflowScopeAdmissionAndStatusMatrix(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid namespace", resource: "clustercopies", kind: "ClusterCopy",
-			spec: merge(clusterNamespaces(), map[string]any{"sourceNamespace": "Invalid_Namespace"}),
+			name:     "invalid namespace",
+			resource: "clustercopies",
+			kind:     "ClusterCopy",
+			spec: merge(
+				clusterNamespaces(),
+				map[string]any{"sourceNamespace": "Invalid_Namespace"},
+			),
 		},
 	}
 	for index, test := range invalidCluster {
@@ -886,8 +897,10 @@ func TestControllerWorkflowCollisionAndNamespaceDeletion(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if rename.Status.Phase != "" && rename.Status.Phase != v1alpha1.WorkflowPhase(domain.PhasePlanned) ||
-			copyWorkflow.Status.Phase != "" && copyWorkflow.Status.Phase != v1alpha1.WorkflowPhase(domain.PhasePlanned) {
+		if rename.Status.Phase != "" &&
+			rename.Status.Phase != v1alpha1.WorkflowPhase(domain.PhasePlanned) ||
+			copyWorkflow.Status.Phase != "" &&
+				copyWorkflow.Status.Phase != v1alpha1.WorkflowPhase(domain.PhasePlanned) {
 			t.Fatalf(
 				"colliding workflows advanced: rename=%q copy=%q",
 				rename.Status.Phase,
@@ -1105,9 +1118,11 @@ func TestPVCIdentityScopeAndLifecycle(t *testing.T) {
 						Name:  "writer",
 						Image: envOrDefault("PVC_MIGRATE_E2E_HELPER_IMAGE", "busybox:1.36.1"),
 						Command: []string{
-							"sh", "-c",
+							"sh",
+							"-c",
 							"set -eu; printf '%s\\n' \"$1\" > /data/payload; sync; touch /data/ready; exec sleep 86400",
-							"initializer", marker,
+							"initializer",
+							marker,
 						},
 						ReadinessProbe: &corev1.Probe{
 							ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
@@ -1206,7 +1221,11 @@ func TestPVCIdentityScopeAndLifecycle(t *testing.T) {
 					t.Fatalf("Move unexpectedly has namespace %q", workflow.GetNamespace())
 				}
 				if test.command == "rename" && workflow.GetNamespace() != sourceNamespace {
-					t.Fatalf("Rename namespace=%q want=%q", workflow.GetNamespace(), sourceNamespace)
+					t.Fatalf(
+						"Rename namespace=%q want=%q",
+						workflow.GetNamespace(),
+						sourceNamespace,
+					)
 				}
 			}
 
@@ -1248,7 +1267,15 @@ func TestPVCIdentityScopeAndLifecycle(t *testing.T) {
 				)...,
 			)
 			assertSessionPhase(
-				t, ctx, config, client, mode, test.resource, sourceNamespace, sessionID, "RolledBack",
+				t,
+				ctx,
+				config,
+				client,
+				mode,
+				test.resource,
+				sourceNamespace,
+				sessionID,
+				"RolledBack",
 			)
 
 			rolledBackPVC := waitForBoundPVC(t, ctx, client, sourceNamespace, claimName)
@@ -1473,7 +1500,10 @@ func TestControllerRepositoryStatusCheckpointRoundTrip(t *testing.T) {
 			_, cancelLock := lock.Bind(ctx)
 			defer func() {
 				cancelLock()
-				releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 10*time.Second)
+				releaseCtx, cancelRelease := context.WithTimeout(
+					context.Background(),
+					10*time.Second,
+				)
 				_ = lock.Release(releaseCtx)
 				cancelRelease()
 			}()
@@ -1494,7 +1524,10 @@ func TestControllerRepositoryStatusCheckpointRoundTrip(t *testing.T) {
 					Name:      "source",
 					UID:       "source-pvc-uid",
 				}
-				spec.Backup.SourcePV = domain.ObjectReference{Name: "source-pv", UID: "source-pv-uid"}
+				spec.Backup.SourcePV = domain.ObjectReference{
+					Name: "source-pv",
+					UID:  "source-pv-uid",
+				}
 				spec.Backup.Name = "daily"
 				spec.Backup.BackupRepository = "archive"
 			case domain.OperationRestore:
@@ -1544,7 +1577,10 @@ func TestControllerRepositoryStatusCheckpointRoundTrip(t *testing.T) {
 				loaded.Status.BackupRepository.Type != tt.binding.Type ||
 				loaded.Status.BackupRepository.UID != tt.binding.UID ||
 				loaded.Status.BackupRepository.Generation != tt.binding.Generation {
-				t.Fatalf("repository checkpoint was not persisted: %#v", loaded.Status.BackupRepository)
+				t.Fatalf(
+					"repository checkpoint was not persisted: %#v",
+					loaded.Status.BackupRepository,
+				)
 			}
 
 			switch tt.binding.Type {
@@ -1557,7 +1593,10 @@ func TestControllerRepositoryStatusCheckpointRoundTrip(t *testing.T) {
 			case domain.BackupRepositoryTypePVC:
 				if loaded.Status.BackupRepository.PVC == nil ||
 					loaded.Status.BackupRepository.PVC.ClaimUID != tt.binding.PVC.ClaimUID {
-					t.Fatalf("PVC checkpoint was not persisted: %#v", loaded.Status.BackupRepository)
+					t.Fatalf(
+						"PVC checkpoint was not persisted: %#v",
+						loaded.Status.BackupRepository,
+					)
 				}
 			}
 
@@ -1566,7 +1605,10 @@ func TestControllerRepositoryStatusCheckpointRoundTrip(t *testing.T) {
 					loaded.Spec.Restore.DestinationPVC.ResourceVersion != "destination-pvc-version" ||
 					loaded.Spec.Restore.DestinationPV.UID != "destination-pv-uid" ||
 					loaded.Spec.Restore.DestinationPV.ResourceVersion != "destination-pv-version" {
-					t.Fatalf("restore destination checkpoint was not persisted: %#v", loaded.Spec.Restore)
+					t.Fatalf(
+						"restore destination checkpoint was not persisted: %#v",
+						loaded.Spec.Restore,
+					)
 				}
 
 				workflow := &v1alpha1.Restore{}
@@ -1579,7 +1621,10 @@ func TestControllerRepositoryStatusCheckpointRoundTrip(t *testing.T) {
 				}
 				if workflow.Spec.DestinationPVC.UID != "" ||
 					workflow.Spec.DestinationPVC.ResourceVersion != "" {
-					t.Fatalf("controller-owned destination identity leaked into restore spec: %#v", workflow.Spec.DestinationPVC)
+					t.Fatalf(
+						"controller-owned destination identity leaked into restore spec: %#v",
+						workflow.Spec.DestinationPVC,
+					)
 				}
 				if workflow.Status.DestinationPVC == nil ||
 					workflow.Status.DestinationPVC.UID != "destination-pvc-uid" ||
@@ -2220,9 +2265,11 @@ func TestDeploymentWFFCMigrationAndRollback(t *testing.T) {
 							Name:  "writer",
 							Image: envOrDefault("PVC_MIGRATE_E2E_HELPER_IMAGE", "busybox:1.36.1"),
 							Command: []string{
-								"sh", "-c",
+								"sh",
+								"-c",
 								"set -eu; printf '%s\\n' \"$1\" > /data/payload; dd if=/dev/zero bs=1048576 count=8 >> /data/payload 2>/dev/null; sync; touch /data/ready; exec sleep 86400",
-								"writer", "deployment-e2e-" + suffix,
+								"writer",
+								"deployment-e2e-" + suffix,
 							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
@@ -2232,12 +2279,16 @@ func TestDeploymentWFFCMigrationAndRollback(t *testing.T) {
 							},
 							VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
 						}},
-						Volumes: []corev1.Volume{{
-							Name: "data",
-							VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: claimName,
-							}},
-						}},
+						Volumes: []corev1.Volume{
+							{
+								Name: "data",
+								VolumeSource: corev1.VolumeSource{
+									PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+										ClaimName: claimName,
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -2258,7 +2309,9 @@ func TestDeploymentWFFCMigrationAndRollback(t *testing.T) {
 		t.Fatalf("target node %s equals source node", targetNode)
 	}
 	sourceDigest := podDigest(t, ctx, config, client, namespace, sourcePod.Name)
-	sourcePVC, err := client.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, claimName, metav1.GetOptions{})
+	sourcePVC, err := client.CoreV1().
+		PersistentVolumeClaims(namespace).
+		Get(ctx, claimName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2292,11 +2345,29 @@ func TestDeploymentWFFCMigrationAndRollback(t *testing.T) {
 		"--strategy", "clusterip",
 		"--precopy-passes", "1",
 	}
-	runCLI(t, ctx, binary, append(append([]string{}, common...), append(append([]string{}, migration...), "--dry-run")...)...)
+	runCLI(
+		t,
+		ctx,
+		binary,
+		append(
+			append([]string{}, common...),
+			append(append([]string{}, migration...), "--dry-run")...,
+		)...,
+	)
 	assertSessionRecordNotFound(t, ctx, config, client, mode, "podmigrations", namespace, sessionID)
 	executeMigration := append(append([]string{"--yes"}, migration...), "--dry-run=false")
 	runCLI(t, ctx, binary, append(append([]string{}, common...), executeMigration...)...)
-	waitForSessionPhase(t, ctx, config, client, mode, "podmigrations", namespace, sessionID, "Completed")
+	waitForSessionPhase(
+		t,
+		ctx,
+		config,
+		client,
+		mode,
+		"podmigrations",
+		namespace,
+		sessionID,
+		"Completed",
+	)
 	if controllerProcess != nil {
 		controllerProcess.Stop(t)
 	}
@@ -2305,40 +2376,107 @@ func TestDeploymentWFFCMigrationAndRollback(t *testing.T) {
 	if migratedPod.Spec.NodeName != targetNode {
 		t.Fatalf("migrated Deployment Pod node=%s want=%s", migratedPod.Spec.NodeName, targetNode)
 	}
-	migratedPVC, err := client.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, claimName, metav1.GetOptions{})
+	migratedPVC, err := client.CoreV1().
+		PersistentVolumeClaims(namespace).
+		Get(ctx, claimName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if migratedPVC.Status.Phase != corev1.ClaimBound || migratedPVC.Spec.VolumeName == sourcePV {
-		t.Fatalf("migrated PVC phase=%s volume=%s source=%s", migratedPVC.Status.Phase, migratedPVC.Spec.VolumeName, sourcePV)
+		t.Fatalf(
+			"migrated PVC phase=%s volume=%s source=%s",
+			migratedPVC.Status.Phase,
+			migratedPVC.Spec.VolumeName,
+			sourcePV,
+		)
 	}
-	if digest := podDigest(t, ctx, config, client, namespace, migratedPod.Name); digest != sourceDigest {
+	if digest := podDigest(
+		t,
+		ctx,
+		config,
+		client,
+		namespace,
+		migratedPod.Name,
+	); digest != sourceDigest {
 		t.Fatalf("migrated Deployment digest=%s want=%s", digest, sourceDigest)
 	}
-	deployment, err := client.AppsV1().Deployments(namespace).Get(ctx, "writer", metav1.GetOptions{})
+	deployment, err := client.AppsV1().
+		Deployments(namespace).
+		Get(ctx, "writer", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 || deployment.Status.ReadyReplicas != 1 {
-		t.Fatalf("Deployment was not restored: replicas=%v ready=%d", deployment.Spec.Replicas, deployment.Status.ReadyReplicas)
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 ||
+		deployment.Status.ReadyReplicas != 1 {
+		t.Fatalf(
+			"Deployment was not restored: replicas=%v ready=%d",
+			deployment.Spec.Replicas,
+			deployment.Status.ReadyReplicas,
+		)
 	}
 
-	runCLI(t, ctx, binary, append(append([]string{}, common...), "--yes", "migrate-pod", "rollback", sessionID, "--dry-run=false")...)
+	runCLI(
+		t,
+		ctx,
+		binary,
+		append(
+			append([]string{}, common...),
+			"--yes",
+			"migrate-pod",
+			"rollback",
+			sessionID,
+			"--dry-run=false",
+		)...,
+	)
 	rolledBackPod := waitForReadyPodBySelector(t, ctx, client, namespace, selector, sourceNode)
-	rolledBackPVC, err := client.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, claimName, metav1.GetOptions{})
+	rolledBackPVC, err := client.CoreV1().
+		PersistentVolumeClaims(namespace).
+		Get(ctx, claimName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rolledBackPVC.Spec.VolumeName != sourcePV {
 		t.Fatalf("rolled-back PVC volume=%s want=%s", rolledBackPVC.Spec.VolumeName, sourcePV)
 	}
-	if digest := podDigest(t, ctx, config, client, namespace, rolledBackPod.Name); digest != sourceDigest {
+	if digest := podDigest(
+		t,
+		ctx,
+		config,
+		client,
+		namespace,
+		rolledBackPod.Name,
+	); digest != sourceDigest {
 		t.Fatalf("rolled-back Deployment digest=%s want=%s", digest, sourceDigest)
 	}
-	assertSessionPhase(t, ctx, config, client, mode, "podmigrations", namespace, sessionID, "RolledBack")
+	assertSessionPhase(
+		t,
+		ctx,
+		config,
+		client,
+		mode,
+		"podmigrations",
+		namespace,
+		sessionID,
+		"RolledBack",
+	)
 
 	setRollbackPVsToDelete(t, ctx, client, sessionID)
-	runCLI(t, ctx, binary, append(append([]string{}, common...), "--yes", "migrate-pod", "cleanup", sessionID, "--delete-rollback-pv", "--finalize", "--delete-session", "--dry-run=false")...)
+	runCLI(
+		t,
+		ctx,
+		binary,
+		append(
+			append([]string{}, common...),
+			"--yes",
+			"migrate-pod",
+			"cleanup",
+			sessionID,
+			"--delete-rollback-pv",
+			"--finalize",
+			"--delete-session",
+			"--dry-run=false",
+		)...,
+	)
 	assertSessionRecordNotFound(t, ctx, config, client, mode, "podmigrations", namespace, sessionID)
 }
 
@@ -4744,7 +4882,8 @@ func waitForReadyPodBySelector(
 					continue
 				}
 				for _, condition := range pod.Status.Conditions {
-					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+					if condition.Type == corev1.PodReady &&
+						condition.Status == corev1.ConditionTrue {
 						result = pod.DeepCopy()
 						return true, nil
 					}

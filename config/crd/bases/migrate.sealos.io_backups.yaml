@@ -60,9 +60,8 @@ spec:
               path:
                 type: string
               repositoryRef:
-                description: |-
-                  RepositoryRef selects a user-owned BackupRepository in this workflow
-                  namespace. The referenced object owns the complete backup location.
+                description: LocalObjectReference identifies a resource in the same
+                  namespace.
                 properties:
                   name:
                     maxLength: 253
@@ -130,18 +129,11 @@ spec:
                 required:
                 - name
                 type: object
-              toolImage:
-                type: string
             required:
             - name
             - repositoryRef
-            - sourcePV
             - sourcePVC
             type: object
-            x-kubernetes-validations:
-            - message: sourcePVC.uid and sourcePV.uid are required planning identities
-              rule: has(self.sourcePVC.uid) && size(self.sourcePVC.uid) > 0 && has(self.sourcePV.uid)
-                && size(self.sourcePV.uid) > 0
           status:
             properties:
               completedAt:
@@ -323,6 +315,104 @@ spec:
                 - Moving
                 - Failed
                 type: string
+              plan:
+                properties:
+                  deleteExtraneous:
+                    type: boolean
+                  name:
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[A-Za-z0-9][A-Za-z0-9._-]*$
+                    type: string
+                  online:
+                    type: boolean
+                  openebsLvmEnableShared:
+                    type: boolean
+                  path:
+                    type: string
+                  repositoryRef:
+                    description: |-
+                      RepositoryRef selects a user-owned BackupRepository in this workflow
+                      namespace. The referenced object owns the complete backup location.
+                    properties:
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  sourcePV:
+                    description: |-
+                      LocalResourceReference identifies a resource whose namespace is established
+                      by the containing workflow, or a cluster-scoped resource such as a PV.
+                      Namespaced workflow APIs derive their boundary from metadata.namespace.
+                    properties:
+                      apiVersion:
+                        maxLength: 253
+                        type: string
+                      kind:
+                        maxLength: 253
+                        type: string
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                      resourceVersion:
+                        maxLength: 256
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  sourcePVC:
+                    description: |-
+                      LocalResourceReference identifies a resource whose namespace is established
+                      by the containing workflow, or a cluster-scoped resource such as a PV.
+                      Namespaced workflow APIs derive their boundary from metadata.namespace.
+                    properties:
+                      apiVersion:
+                        maxLength: 253
+                        type: string
+                      kind:
+                        maxLength: 253
+                        type: string
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                      resourceVersion:
+                        maxLength: 256
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  toolImage:
+                    type: string
+                required:
+                - name
+                - repositoryRef
+                - sourcePV
+                - sourcePVC
+                type: object
+                x-kubernetes-validations:
+                - message: sourcePVC.uid and sourcePV.uid are required planning identities
+                  rule: has(self.sourcePVC.uid) && size(self.sourcePVC.uid) > 0 &&
+                    has(self.sourcePV.uid) && size(self.sourcePV.uid) > 0
               repository:
                 properties:
                   generation:

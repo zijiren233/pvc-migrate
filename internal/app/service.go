@@ -301,6 +301,15 @@ func (s *Service) withSessionLock(
 						"workflow UID changed after it was loaded",
 					)
 				}
+
+				if session.PlanPending &&
+					(!latest.PlanPending || latest.ResourceVersion != session.ResourceVersion) {
+					return domain.NewError(
+						domain.ErrorConflict,
+						"session lock",
+						"workflow changed while waiting for planning; reload before retrying",
+					)
+				}
 			}
 
 			return fn(lockedCtx)
@@ -326,6 +335,12 @@ func (s *Service) CreateSession(
 	}
 
 	session := domain.NewSession(plan.SessionID, plan.SessionSpec, s.now())
+	if len(plan.Intent) > 0 {
+		session.Intent = plan.Intent
+		session.PlanPending = true
+		session.Backend = kube.SessionBackendCRD
+	}
+
 	if s.store.StorageBackend() == kube.SessionBackendCRD {
 		if err := session.Validate(); err != nil {
 			return nil, err

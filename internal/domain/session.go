@@ -1016,11 +1016,14 @@ type SessionStatus struct {
 }
 
 type Session struct {
-	APIVersion      string `json:"apiVersion" yaml:"apiVersion"`
-	Kind            string `json:"kind"       yaml:"kind"`
-	ID              string `json:"id"         yaml:"id"`
-	Generation      int64  `json:"generation" yaml:"generation"`
-	ResourceVersion string `json:"-"          yaml:"-"`
+	// Intent is the CR request; Spec is the controller-resolved execution plan.
+	Intent          json.RawMessage `json:"-"          yaml:"-"`
+	PlanPending     bool            `json:"-"          yaml:"-"`
+	APIVersion      string          `json:"apiVersion" yaml:"apiVersion"`
+	Kind            string          `json:"kind"       yaml:"kind"`
+	ID              string          `json:"id"         yaml:"id"`
+	Generation      int64           `json:"generation" yaml:"generation"`
+	ResourceVersion string          `json:"-"          yaml:"-"`
 	// Backend is populated by the persistence adapter and is intentionally not
 	// serialized. It lets a routing store send updates to the same backend.
 	Backend string `json:"-" yaml:"-"`
@@ -1307,7 +1310,11 @@ func (s *Session) Transition(next Phase, message string, now time.Time) error {
 	backupTransition := (s.Spec.Type == SessionTypeBackup || s.Spec.Type == SessionTypeRestore) &&
 		((s.Status.Phase == PhasePlanned && next == PhaseWarmCopying) ||
 			(s.Status.Phase == PhaseWarmCopied && next == PhaseCompleted))
-	if !backupTransition && !slices.Contains(transitionPolicy[s.Status.Phase], next) {
+
+	unplannedAbort := s.PlanPending && next == PhaseAborted &&
+		(s.Status.Phase == PhasePlanned || s.Status.Phase == PhaseFailed)
+	if !backupTransition && !unplannedAbort &&
+		!slices.Contains(transitionPolicy[s.Status.Phase], next) {
 		return NewError(
 			ErrorConflict,
 			"transition",
@@ -1455,6 +1462,27 @@ func (s *Session) VolumeStatus(name string) (*VolumeStatus, error) {
 func (s *Session) Validate() error {
 	if err := validateSessionHeader(s); err != nil {
 		return err
+	}
+
+	if s.PlanPending {
+		if s.Backend != "crd" || len(s.Intent) == 0 {
+			return NewError(
+				ErrorValidation,
+				"session",
+				"pending planning requires a controller request",
+			)
+		}
+
+		switch s.Status.Phase {
+		case PhasePlanned, PhaseFailed, PhaseAborted:
+			return nil
+		default:
+			return NewError(
+				ErrorPrecondition,
+				"session",
+				"execution requires a persisted controller plan",
+			)
+		}
 	}
 
 	if err := validateSessionMode(s); err != nil {

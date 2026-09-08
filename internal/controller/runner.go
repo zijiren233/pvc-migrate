@@ -29,6 +29,7 @@ import (
 // The service remains the single owner of phase transitions, persistence and
 // resource fencing; this runner only provides event polling and dispatch.
 type Runner struct {
+	planner          WorkflowPlanner
 	service          workflowResumer
 	store            kube.ControllerSessionStore
 	client           kubernetes.Interface
@@ -319,6 +320,38 @@ func (r *Runner) transitionFailure(
 }
 
 func (r *Runner) reconcileSession(ctx context.Context, session *domain.Session) error {
+	if session != nil && session.PlanPending {
+		if session.Status.Phase == domain.PhaseAborted {
+			return nil
+		}
+
+		reconciler := NewWorkflowReconciler(
+			r.service,
+			r.store,
+		).WithKubernetesClient(r.client).
+			WithTrustedToolImage(r.trustedToolImage).
+			WithPlanner(r.planner)
+		if err := r.store.EnsureSessionProtection(ctx, session); err != nil {
+			return err
+		}
+
+		if err := reconciler.planWorkflow(ctx, session); err != nil {
+			return err
+		}
+
+		if session.PlanPending {
+			if session.Status.Phase == domain.PhaseFailed {
+				return domain.NewError(
+					session.Status.ErrorCategory,
+					"plan workflow",
+					session.Status.Message,
+				)
+			}
+
+			return nil
+		}
+	}
+
 	if r == nil || r.service == nil {
 		return domain.NewError(
 			domain.ErrorValidation,

@@ -24,6 +24,10 @@ func (s *Service) validateAbort(ctx context.Context, session *domain.Session) er
 		return err
 	}
 
+	if session.PlanPending {
+		return nil
+	}
+
 	if err := s.validateOpenEBSLVMSharedMountRestore(ctx, session); err != nil {
 		return err
 	}

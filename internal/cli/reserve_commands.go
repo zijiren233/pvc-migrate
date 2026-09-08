@@ -125,7 +125,8 @@ func (r *rootState) newReserveCommand() *cobra.Command {
 				return err
 			}
 
-			plan, err := runtime.planner.PlanReserve(ctx, options)
+			plan, err := runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+				PlanReserve(ctx, options)
 			if err != nil {
 				return reportPlanningError(cmd, err)
 			}

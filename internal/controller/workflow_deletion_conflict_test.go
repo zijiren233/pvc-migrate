@@ -44,6 +44,8 @@ func TestDeletionSpecConflictPreservesCheckpointAcrossRetries(t *testing.T) {
 				Status: v1alpha1.CopyStatusFromDomain(session.Status, session.Spec.Volumes),
 			}
 			object.Status.Phase = v1alpha1.WorkflowPhase(domain.PhaseWarmCopied)
+			plan := v1alpha1.CopyPlanFromDomain(session.Spec)
+			object.Status.Plan = &plan
 			object.Status.ObservedGeneration = 1
 
 			scheme := runtime.NewScheme()
@@ -65,7 +67,7 @@ func TestDeletionSpecConflictPreservesCheckpointAcrossRetries(t *testing.T) {
 
 						changed.Generation++
 
-						changed.Spec.Volumes[0].SourceReclaimPolicy = "Retain"
+						changed.Spec.DestinationStorageClass = "changed-class"
 						if err := c.Update(ctx, changed); err != nil {
 							return err
 						}

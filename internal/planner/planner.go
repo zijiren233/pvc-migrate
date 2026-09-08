@@ -57,6 +57,7 @@ type planOptions struct {
 }
 
 type Planner struct {
+	requestOnly                   bool
 	client                        kubernetes.Interface
 	controllers                   *controller.Manager
 	openEBSLVMSharedVolumeManager kube.OpenEBSLVMSharedVolumeManager
@@ -145,6 +146,10 @@ func (p *Planner) logInfo(message string, args ...any) {
 }
 
 func (p *Planner) plan(ctx context.Context, options planOptions) (*domain.MigrationPlan, error) {
+	if p.requestOnly {
+		return p.intentPlan(applyDefaults(options))
+	}
+
 	state := newPlanState(p, options)
 	p.validatePlanInputs(state.plan, state.options)
 

@@ -89,7 +89,7 @@ func clusterCommonSession(
 	}
 }
 
-func (s ClusterMigrationSpec) workflowOptions() domain.SessionWorkflowOptions {
+func (s ClusterMigrationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
 		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
@@ -101,7 +101,7 @@ func (s ClusterMigrationSpec) workflowOptions() domain.SessionWorkflowOptions {
 	}
 }
 
-func (s ClusterPodMigrationSpec) workflowOptions() domain.SessionWorkflowOptions {
+func (s ClusterPodMigrationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
 		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
@@ -113,7 +113,7 @@ func (s ClusterPodMigrationSpec) workflowOptions() domain.SessionWorkflowOptions
 	}
 }
 
-func (s ClusterReservationSpec) workflowOptions() domain.SessionWorkflowOptions {
+func (s ClusterReservationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
 		TargetNode:           s.TargetNode,
 		ToolImage:            s.ToolImage,
@@ -121,7 +121,7 @@ func (s ClusterReservationSpec) workflowOptions() domain.SessionWorkflowOptions 
 	}
 }
 
-func (s ClusterCopySpec) workflowOptions() domain.SessionWorkflowOptions {
+func (s ClusterCopyPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
 		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
@@ -133,7 +133,7 @@ func (s ClusterCopySpec) workflowOptions() domain.SessionWorkflowOptions {
 	}
 }
 
-func (s ClusterMigrationSpec) Domain() domain.SessionSpec {
+func (s ClusterMigrationPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
@@ -147,7 +147,7 @@ func (s ClusterMigrationSpec) Domain() domain.SessionSpec {
 	}
 }
 
-func (s ClusterPodMigrationSpec) Domain() domain.SessionSpec {
+func (s ClusterPodMigrationPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
@@ -169,7 +169,7 @@ func (s ClusterPodMigrationSpec) Domain() domain.SessionSpec {
 	}
 }
 
-func (s ClusterReservationSpec) Domain() domain.SessionSpec {
+func (s ClusterReservationPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
@@ -183,7 +183,7 @@ func (s ClusterReservationSpec) Domain() domain.SessionSpec {
 	}
 }
 
-func (s ClusterCopySpec) Domain() domain.SessionSpec {
+func (s ClusterCopyPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
@@ -200,7 +200,7 @@ func (s ClusterCopySpec) Domain() domain.SessionSpec {
 	}
 }
 
-func (s MoveSpec) Domain() domain.SessionSpec {
+func (s MovePlan) Domain() domain.SessionSpec {
 	return identitySessionSpec(
 		domain.SessionTypeMove,
 		string(s.SourceNamespace),
@@ -213,10 +213,10 @@ func (s MoveSpec) Domain() domain.SessionSpec {
 	)
 }
 
-func ClusterMigrationSpecFromDomain(s domain.SessionSpec) ClusterMigrationSpec {
+func ClusterMigrationPlanFromDomain(s domain.SessionSpec) ClusterMigrationPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterMigrationSpec{
+	return ClusterMigrationPlan{
 		SourceNamespace:      NamespaceName(s.SourceNamespace),
 		TemporaryNamespace:   NamespaceName(s.TemporaryNamespace),
 		DestinationNamespace: NamespaceName(s.DestinationNamespace),
@@ -232,10 +232,10 @@ func ClusterMigrationSpecFromDomain(s domain.SessionSpec) ClusterMigrationSpec {
 	}
 }
 
-func ClusterPodMigrationSpecFromDomain(s domain.SessionSpec) ClusterPodMigrationSpec {
+func ClusterPodMigrationPlanFromDomain(s domain.SessionSpec) ClusterPodMigrationPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterPodMigrationSpec{
+	return ClusterPodMigrationPlan{
 		SourceNamespace:        NamespaceName(s.SourceNamespace),
 		TemporaryNamespace:     NamespaceName(s.TemporaryNamespace),
 		SessionNamespace:       NamespaceName(s.SessionNamespace),
@@ -253,10 +253,10 @@ func ClusterPodMigrationSpecFromDomain(s domain.SessionSpec) ClusterPodMigration
 	}
 }
 
-func ClusterReservationSpecFromDomain(s domain.SessionSpec) ClusterReservationSpec {
+func ClusterReservationPlanFromDomain(s domain.SessionSpec) ClusterReservationPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterReservationSpec{
+	return ClusterReservationPlan{
 		SourceNamespace:      NamespaceName(s.SourceNamespace),
 		DestinationNamespace: NamespaceName(s.TemporaryNamespace),
 		SessionNamespace:     NamespaceName(s.SessionNamespace),
@@ -267,10 +267,10 @@ func ClusterReservationSpecFromDomain(s domain.SessionSpec) ClusterReservationSp
 	}
 }
 
-func ClusterCopySpecFromDomain(s domain.SessionSpec) ClusterCopySpec {
+func ClusterCopyPlanFromDomain(s domain.SessionSpec) ClusterCopyPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterCopySpec{
+	return ClusterCopyPlan{
 		SourceNamespace:      NamespaceName(s.SourceNamespace),
 		DestinationNamespace: NamespaceName(s.TemporaryNamespace),
 		SessionNamespace:     NamespaceName(s.SessionNamespace),
@@ -286,10 +286,10 @@ func ClusterCopySpecFromDomain(s domain.SessionSpec) ClusterCopySpec {
 	}
 }
 
-func MoveSpecFromDomain(s domain.SessionSpec) MoveSpec {
+func MovePlanFromDomain(s domain.SessionSpec) MovePlan {
 	volume := firstVolume(s.Volumes)
 
-	return MoveSpec{
+	return MovePlan{
 		SourceNamespace:      NamespaceName(s.SourceNamespace),
 		DestinationNamespace: NamespaceName(s.DestinationNamespace),
 		SessionNamespace:     NamespaceName(s.SessionNamespace),

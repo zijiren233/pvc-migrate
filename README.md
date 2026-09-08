@@ -111,6 +111,47 @@ to the execution model derives source, temporary, destination, session, and
 repository namespaces from metadata. Cluster workflow specs declare each
 operational namespace once at the top level and keep nested references local
 to the relevant source or destination namespace.
+
+Submit declarative intent directly, or use `--mode=controller` in the CLI:
+
+```yaml
+apiVersion: migrate.sealos.io/v1alpha1
+kind: Copy
+metadata:
+  name: copy-data
+  namespace: application
+spec:
+  volumes:
+    - sourcePVC:
+        name: data
+  destinationStorageClass: fast
+```
+
+For `Migration`, the same volume selection migrates the original PVC in place.
+For `PodMigration`, replace `volumes` with `pod: {name: database-0}`; the
+controller discovers the workload adapter and every mounted PVC. `Copy` and
+`Reservation` also accept `pod`, with optional `volumes` entries overriding
+individual PVC capacity, destination name, or transfer paths. Omitted capacity
+and storage class inherit the source; omitted namespace roles inherit the
+source namespace. All selected namespaces must already exist.
+
+References require only `name`. Optional `uid` and `resourceVersion` constrain
+discovery to a specific resource identity or revision. The controller resolves
+PVC/PV identities, placement, workload snapshots, and its configured tool image
+under a Lease, then persists an immutable execution snapshot in `status.plan`
+before any data-plane action. Runtime checkpoints remain in the other status
+fields. The CLI submits the same concise spec; local discovery remains available
+through `plan`, `--dry-run`, and session mode.
+
+A discovery failure records `Failed` and `Planned=False`, with a message and
+event. Correcting the spec retries discovery while no plan exists; an explicit
+CLI `resume` retries the same intent. Once `status.plan` exists, spec changes
+are rejected by the controller and require a new workflow. Abort before planning
+keeps the workflow stopped even if its spec changes; cleanup or CR deletion
+removes the unexecuted request without touching source storage. This API replaces
+the previous execution-snapshot spec format; existing requests must be completed
+and cleaned up before upgrading the CRDs.
+
 Backup and restore use a namespaced `BackupRepository` for a user-selected
 location. `spec.type` selects a structured backend configuration. `s3` is
 currently executable and reads its credentials from a Secret in the repository
@@ -137,7 +178,7 @@ require that operator identity in controller mode.
 Submit a supported migration and wait for its CR status to reach completion:
 
 ```bash
-pvc-migrate --mode=session --yes migrate \
+pvc-migrate --mode=controller --yes migrate \
   --source-namespace application --source-pvc data \
   --destination-pvc data --dry-run=false
 kubectl -n application get migrations

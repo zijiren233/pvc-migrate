@@ -396,7 +396,8 @@ func (r *rootState) runPodMigrateCommand(
 	)
 	options.StagingNamespace = options.TemporaryNamespace
 
-	plan, err := runtime.planner.PlanPodMigration(ctx, options)
+	plan, err := runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+		PlanPodMigration(ctx, options)
 	if err != nil {
 		return reportPlanningError(cmd, err)
 	}

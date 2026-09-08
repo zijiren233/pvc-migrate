@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -494,6 +495,17 @@ func (s *CRDSessionStore) create(ctx context.Context, session *domain.Session, d
 		)
 	}
 
+	if len(session.Intent) > 0 {
+		data, err := json.Marshal(map[string]json.RawMessage{"spec": session.Intent})
+		if err != nil {
+			return err
+		}
+
+		if err := json.Unmarshal(data, object); err != nil {
+			return err
+		}
+	}
+
 	options := &crclient.CreateOptions{}
 	if dryRun {
 		options.DryRun = []string{metav1.DryRunAll}
@@ -531,6 +543,9 @@ func (s *CRDSessionStore) create(ctx context.Context, session *domain.Session, d
 	}
 
 	session.Generation = created.Generation
+	session.Intent = created.Intent
+	session.PlanPending = created.PlanPending
+	session.Spec = created.Spec
 	session.Status = created.Status
 	session.BackendResource = created.BackendResource
 	session.ResourceVersion = object.GetResourceVersion()
@@ -1066,14 +1081,6 @@ func (s *CRDSessionStore) Update(ctx context.Context, session *domain.Session) e
 		)
 	}
 
-	if !setWorkflowSpec(updated, session.Spec) {
-		return domain.NewError(
-			domain.ErrorInternal,
-			"update session",
-			"unsupported workflow resource",
-		)
-	}
-
 	updated.SetLabels(MergeSessionLabels(existing.GetLabels(), session.ID))
 	updated.SetFinalizers(ensureSessionFinalizer(updated.GetFinalizers()))
 
@@ -1097,7 +1104,7 @@ func (s *CRDSessionStore) Update(ctx context.Context, session *domain.Session) e
 	session.Status.ObservedGeneration = updated.GetGeneration()
 
 	status := session.Status
-	if !setWorkflowStatus(updated, session.Spec, status) {
+	if !setWorkflowStatus(updated, session.Spec, status, !session.PlanPending) {
 		return domain.NewError(
 			domain.ErrorInternal,
 			"update session",
@@ -1175,7 +1182,7 @@ func (s *CRDSessionStore) rebindWorkflowResource(
 	session.Status.ObservedGeneration = target.GetGeneration()
 
 	status := session.Status
-	if !setWorkflowStatus(target, session.Spec, status) {
+	if !setWorkflowStatus(target, session.Spec, status, !session.PlanPending) {
 		failure := domain.NewError(
 			domain.ErrorInternal,
 			"rebind session",
@@ -1673,6 +1680,25 @@ func DecodeWorkflow(object crclient.Object) (*domain.Session, error) {
 	session.BackendUID = object.GetUID()
 
 	session.Deleting = object.GetDeletionTimestamp() != nil
+
+	data, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+
+	var envelope struct {
+		Spec   json.RawMessage `json:"spec"`
+		Status struct {
+			Plan json.RawMessage `json:"plan"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+
+	session.Intent = envelope.Spec
+
+	session.PlanPending = len(envelope.Status.Plan) == 0 || string(envelope.Status.Plan) == "null"
 	if status.Phase != "" {
 		// A declarative client may checkpoint only the phase before the first
 		// controller observation. Keep the status-owned fields while deriving
@@ -1922,106 +1948,116 @@ func workflowSpecStatus(object crclient.Object) (domain.SessionSpec, domain.Sess
 	switch typed := object.(type) {
 	case *v1alpha1.Migration:
 		spec := typed.Spec.Domain(typed.Namespace)
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain(typed.Namespace)
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(typed.Namespace), true
 	case *v1alpha1.ClusterMigration:
 		spec := typed.Spec.Domain()
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain()
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(), true
 	case *v1alpha1.PodMigration:
 		spec := typed.Spec.Domain(typed.Namespace)
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain(typed.Namespace)
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(typed.Namespace), true
 	case *v1alpha1.ClusterPodMigration:
 		spec := typed.Spec.Domain()
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain()
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(), true
 	case *v1alpha1.Reservation:
 		spec := typed.Spec.Domain(typed.Namespace)
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain(typed.Namespace)
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(typed.Namespace), true
 	case *v1alpha1.ClusterReservation:
 		spec := typed.Spec.Domain()
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain()
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(), true
 	case *v1alpha1.Copy:
 		spec := typed.Spec.Domain(typed.Namespace)
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain(typed.Namespace)
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(typed.Namespace), true
 	case *v1alpha1.ClusterCopy:
 		spec := typed.Spec.Domain()
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain()
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(), true
 	case *v1alpha1.Backup:
-		return typed.Spec.Domain(typed.Namespace), typed.Status.Domain(), true
+		spec := typed.Spec.Domain(typed.Namespace)
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain(typed.Namespace)
+		}
+
+		return spec, typed.Status.Domain(), true
 	case *v1alpha1.Restore:
 		spec := typed.Spec.Domain(typed.Namespace)
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain(typed.Namespace)
+		}
+
 		typed.Status.ApplyToDomainSpec(&spec)
+
 		return spec, typed.Status.Domain(), true
 	case *v1alpha1.Rename:
-		return typed.Spec.Domain(typed.Namespace), typed.Status.Domain(typed.Namespace), true
+		spec := typed.Spec.Domain(typed.Namespace)
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain(typed.Namespace)
+		}
+
+		return spec, typed.Status.Domain(typed.Namespace), true
 	case *v1alpha1.Move:
-		return typed.Spec.Domain(), typed.Status.Domain(), true
+		spec := typed.Spec.Domain()
+		if typed.Status.Plan != nil {
+			spec = typed.Status.Plan.Domain()
+		}
+
+		return spec, typed.Status.Domain(), true
 	default:
 		return domain.SessionSpec{}, domain.SessionStatus{}, false
 	}
-}
-
-func setWorkflowSpec(object crclient.Object, spec domain.SessionSpec) bool {
-	if object == nil {
-		return false
-	}
-
-	switch typed := object.(type) {
-	case *v1alpha1.Migration:
-		typed.Spec = v1alpha1.MigrationSpecFromDomain(spec)
-	case *v1alpha1.ClusterMigration:
-		typed.Spec = v1alpha1.ClusterMigrationSpecFromDomain(spec)
-	case *v1alpha1.PodMigration:
-		pod := typed.Spec.Workload.Pod
-		affectedPods := append(
-			[]v1alpha1.LocalResourceReference(nil),
-			typed.Spec.Workload.AffectedPods...,
-		)
-		typed.Spec = v1alpha1.PodMigrationSpecFromDomain(spec)
-		typed.Spec.Workload.Pod = pod
-		typed.Spec.Workload.AffectedPods = affectedPods
-	case *v1alpha1.ClusterPodMigration:
-		pod := typed.Spec.Workload.Pod
-		affectedPods := append(
-			[]v1alpha1.LocalResourceReference(nil),
-			typed.Spec.Workload.AffectedPods...,
-		)
-		typed.Spec = v1alpha1.ClusterPodMigrationSpecFromDomain(spec)
-		typed.Spec.Workload.Pod = pod
-		typed.Spec.Workload.AffectedPods = affectedPods
-	case *v1alpha1.Reservation:
-		typed.Spec = v1alpha1.ReservationSpecFromDomain(spec)
-	case *v1alpha1.ClusterReservation:
-		typed.Spec = v1alpha1.ClusterReservationSpecFromDomain(spec)
-	case *v1alpha1.Copy:
-		typed.Spec = v1alpha1.CopySpecFromDomain(spec)
-	case *v1alpha1.ClusterCopy:
-		typed.Spec = v1alpha1.ClusterCopySpecFromDomain(spec)
-	case *v1alpha1.Backup:
-		typed.Spec = v1alpha1.BackupSpecFromDomain(spec)
-	case *v1alpha1.Restore:
-		typed.Spec = v1alpha1.RestoreSpecFromDomain(spec)
-	case *v1alpha1.Rename:
-		typed.Spec = v1alpha1.RenameSpecFromDomain(spec)
-	case *v1alpha1.Move:
-		typed.Spec = v1alpha1.MoveSpecFromDomain(spec)
-	default:
-		return false
-	}
-
-	return true
 }
 
 func setWorkflowStatus(
 	object crclient.Object,
 	spec domain.SessionSpec,
 	status domain.SessionStatus,
+	planned bool,
 ) bool {
 	if object == nil {
 		return false
@@ -2029,29 +2065,93 @@ func setWorkflowStatus(
 
 	switch typed := object.(type) {
 	case *v1alpha1.Migration:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.MigrationStatusFromDomain(status, spec.Volumes)
+		typed.Status.Plan = initialWorkflowPlan(
+			plan,
+			v1alpha1.MigrationPlanFromDomain(spec),
+			planned,
+		)
 	case *v1alpha1.ClusterMigration:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.ClusterMigrationStatusFromDomain(status, spec.Volumes)
+		typed.Status.Plan = initialWorkflowPlan(
+			plan,
+			v1alpha1.ClusterMigrationPlanFromDomain(spec),
+			planned,
+		)
 	case *v1alpha1.PodMigration:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.PodMigrationStatusFromDomain(status, spec)
+		typed.Status.Plan = initialWorkflowPlan(
+			plan,
+			v1alpha1.PodMigrationPlanFromDomain(spec),
+			planned,
+		)
 	case *v1alpha1.ClusterPodMigration:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.ClusterPodMigrationStatusFromDomain(status, spec)
+		typed.Status.Plan = initialWorkflowPlan(
+			plan,
+			v1alpha1.ClusterPodMigrationPlanFromDomain(spec),
+			planned,
+		)
 	case *v1alpha1.Reservation:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.ReservationStatusFromDomain(status, spec.Volumes)
+		typed.Status.Plan = initialWorkflowPlan(
+			plan,
+			v1alpha1.ReservationPlanFromDomain(spec),
+			planned,
+		)
 	case *v1alpha1.ClusterReservation:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.ClusterReservationStatusFromDomain(status, spec.Volumes)
+		typed.Status.Plan = initialWorkflowPlan(
+			plan,
+			v1alpha1.ClusterReservationPlanFromDomain(spec),
+			planned,
+		)
 	case *v1alpha1.Copy:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.CopyStatusFromDomain(status, spec.Volumes)
+		typed.Status.Plan = initialWorkflowPlan(plan, v1alpha1.CopyPlanFromDomain(spec), planned)
 	case *v1alpha1.ClusterCopy:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.ClusterCopyStatusFromDomain(status, spec.Volumes)
+		typed.Status.Plan = initialWorkflowPlan(
+			plan,
+			v1alpha1.ClusterCopyPlanFromDomain(spec),
+			planned,
+		)
 	case *v1alpha1.Backup:
+		plan := typed.Status.Plan
 		typed.Status = v1alpha1.BackupStatusFromDomain(status)
+
+		typed.Status.Plan = initialWorkflowPlan(plan, v1alpha1.BackupPlanFromDomain(spec), planned)
 	case *v1alpha1.Restore:
+		plan := typed.Status.Plan
+
 		typed.Status = v1alpha1.RestoreStatusFromDomain(status, spec)
+		typed.Status.Plan = initialWorkflowPlan(plan, v1alpha1.RestorePlanFromDomain(spec), planned)
 	case *v1alpha1.Rename:
+		plan := typed.Status.Plan
 		typed.Status = v1alpha1.RenameStatusFromDomain(status)
+
+		typed.Status.Plan = initialWorkflowPlan(plan, v1alpha1.RenamePlanFromDomain(spec), planned)
 	case *v1alpha1.Move:
+		plan := typed.Status.Plan
 		typed.Status = v1alpha1.MoveStatusFromDomain(status)
+
+		typed.Status.Plan = initialWorkflowPlan(plan, v1alpha1.MovePlanFromDomain(spec), planned)
 	default:
 		return false
 	}
@@ -2123,3 +2223,11 @@ var (
 	_ crclient.Object     = (*v1alpha1.Migration)(nil)
 	_ crclient.ObjectList = (*v1alpha1.MigrationList)(nil)
 )
+
+// Once committed, the resolved input remains stable across runtime checkpoints.
+func initialWorkflowPlan[T any](existing *T, snapshot T, planned bool) *T {
+	if existing == nil && planned {
+		return &snapshot
+	}
+	return existing
+}

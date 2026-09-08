@@ -28,6 +28,10 @@ func (s *Service) validateCleanup(
 		return err
 	}
 
+	if session.PlanPending {
+		return nil
+	}
+
 	if !cleanupPhaseAllowed(session) {
 		return domain.NewError(
 			domain.ErrorPrecondition,

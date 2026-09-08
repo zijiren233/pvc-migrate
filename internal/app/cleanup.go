@@ -81,6 +81,13 @@ func (s *Service) cleanup(
 		return domain.NewError(domain.ErrorValidation, "cleanup", "session is nil")
 	}
 
+	if session.PlanPending {
+		if options.DeleteSession {
+			return s.deleteCleanupSession(ctx, session)
+		}
+		return nil
+	}
+
 	if !cleanupPhaseAllowed(session) {
 		return domain.NewError(
 			domain.ErrorPrecondition,

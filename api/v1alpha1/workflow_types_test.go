@@ -41,7 +41,7 @@ func TestOperationSpecsExposeOnlyTheirOwnPayload(t *testing.T) {
 		}
 	}
 
-	if !containsJSONField(encoded, `"workload":`) ||
+	if !containsJSONField(encoded, `"pod":`) ||
 		!containsJSONField(encoded, `"precopyPasses":`) {
 		t.Fatalf("PodMigration omitted operation fields: %s", encoded)
 	}
@@ -65,7 +65,7 @@ func TestPodMigrationOriginalObjectUsesKubernetesJSON(t *testing.T) {
 		false,
 	)
 
-	apiSpec := v1alpha1.PodMigrationSpecFromDomain(spec)
+	apiSpec := v1alpha1.PodMigrationPlanFromDomain(spec)
 
 	data, err := json.Marshal(apiSpec)
 	if err != nil {
@@ -76,7 +76,7 @@ func TestPodMigrationOriginalObjectUsesKubernetesJSON(t *testing.T) {
 		t.Fatalf("originalObject must remain structured JSON, got %s", data)
 	}
 
-	var decoded v1alpha1.PodMigrationSpec
+	var decoded v1alpha1.PodMigrationPlan
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestWorkflowConversionsDoNotShareMutablePointers(t *testing.T) {
 		},
 		domain.SessionWorkflowOptions{}, 1, false,
 	)
-	apiSpec := v1alpha1.PodMigrationSpecFromDomain(spec)
+	apiSpec := v1alpha1.PodMigrationPlanFromDomain(spec)
 	*spec.WorkloadPtr().OriginalReplicas = 8
 
 	apiSpec.Workload.AffectedPods[0].Name = "api-mutated"
@@ -147,14 +147,14 @@ func TestWorkflowConversionsDoNotShareMutablePointers(t *testing.T) {
 
 func TestWorkflowAPITypesDoNotExposeSessionEnvelope(t *testing.T) {
 	for _, spec := range []any{
-		v1alpha1.MigrationSpec{},
-		v1alpha1.PodMigrationSpec{},
-		v1alpha1.ReservationSpec{},
-		v1alpha1.CopySpec{},
-		v1alpha1.BackupSpec{},
-		v1alpha1.RestoreSpec{},
-		v1alpha1.RenameSpec{},
-		v1alpha1.MoveSpec{},
+		v1alpha1.MigrationPlan{},
+		v1alpha1.PodMigrationPlan{},
+		v1alpha1.ReservationPlan{},
+		v1alpha1.CopyPlan{},
+		v1alpha1.BackupPlan{},
+		v1alpha1.RestorePlan{},
+		v1alpha1.RenamePlan{},
+		v1alpha1.MovePlan{},
 	} {
 		data, err := json.Marshal(spec)
 		if err != nil {
@@ -190,16 +190,16 @@ func TestWorkflowAPITypesDoNotExposeSessionEnvelope(t *testing.T) {
 func TestNamespacedWorkflowJSONDoesNotExposeNamespaceSelectors(t *testing.T) {
 	local := v1alpha1.LocalResourceReference{Name: "data"}
 	objects := []any{
-		v1alpha1.MigrationSpec{Volumes: []v1alpha1.VolumeSpec{{
+		v1alpha1.MigrationPlan{Volumes: []v1alpha1.VolumeSpec{{
 			SourcePVC: local, SourcePV: local, DestinationPVC: local,
 		}}},
-		v1alpha1.PodMigrationSpec{Workload: v1alpha1.WorkloadSpec{
+		v1alpha1.PodMigrationPlan{Workload: v1alpha1.WorkloadSpec{
 			Adapter: v1alpha1.WorkloadStandalone,
 			Pod:     &local,
 		}},
-		v1alpha1.BackupSpec{SourcePVC: local, SourcePV: local, Name: "daily"},
-		v1alpha1.RestoreSpec{DestinationPVC: local, Name: "daily"},
-		v1alpha1.RenameSpec{PVCIdentityFields: v1alpha1.PVCIdentityFields{
+		v1alpha1.BackupPlan{SourcePVC: local, SourcePV: local, Name: "daily"},
+		v1alpha1.RestorePlan{DestinationPVC: local, Name: "daily"},
+		v1alpha1.RenamePlan{PVCIdentityFields: v1alpha1.PVCIdentityFields{
 			SourcePVC: local, SourcePV: local, DestinationPVC: local,
 		}},
 		v1alpha1.MigrationStatus{Volumes: []v1alpha1.MigrationVolumeStatus{{
@@ -227,7 +227,7 @@ func TestNamespacedWorkflowJSONDoesNotExposeNamespaceSelectors(t *testing.T) {
 }
 
 func TestClusterWorkflowUsesIndependentContracts(t *testing.T) {
-	migrationVolumes, ok := reflect.TypeFor[v1alpha1.ClusterMigrationSpec]().
+	migrationVolumes, ok := reflect.TypeFor[v1alpha1.ClusterMigrationPlan]().
 		FieldByName("Volumes")
 	if !ok || migrationVolumes.Type.Elem() != reflect.TypeFor[v1alpha1.ClusterVolumeSpec]() {
 		t.Fatalf("ClusterMigration volumes type=%v", migrationVolumes.Type)
@@ -263,14 +263,14 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 		fields []string
 	}{
 		{
-			name: "migration", spec: v1alpha1.MigrationSpec{},
+			name: "migration", spec: v1alpha1.MigrationPlan{},
 			fields: []string{
 				"deleteExtraneous", "skipSourceUsageCheck", "sourceNode",
 				"strategies", "targetNode", "toolImage", "verifyChecksum", "volumes",
 			},
 		},
 		{
-			name: "pod migration", spec: v1alpha1.PodMigrationSpec{},
+			name: "pod migration", spec: v1alpha1.PodMigrationPlan{},
 			fields: []string{
 				"deleteExtraneous", "openebsLvmEnableShared", "precopyPasses",
 				"skipSourceUsageCheck", "sourceNode", "strategies", "targetNode", "toolImage",
@@ -278,13 +278,13 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 			},
 		},
 		{
-			name: "reservation", spec: v1alpha1.ReservationSpec{},
+			name: "reservation", spec: v1alpha1.ReservationPlan{},
 			fields: []string{
 				"skipSourceUsageCheck", "targetNode", "toolImage", "volumes",
 			},
 		},
 		{
-			name: "copy", spec: v1alpha1.CopySpec{},
+			name: "copy", spec: v1alpha1.CopyPlan{},
 			fields: []string{
 				"deleteExtraneous", "online", "skipSourceUsageCheck", "sourceNode",
 				"strategies", "targetNode", "toolImage", "volumes",
@@ -292,7 +292,7 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 			},
 		},
 		{
-			name: "backup", spec: v1alpha1.BackupSpec{},
+			name: "backup", spec: v1alpha1.BackupPlan{},
 			fields: []string{
 				"deleteExtraneous",
 				"name",
@@ -306,7 +306,7 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 			},
 		},
 		{
-			name: "restore", spec: v1alpha1.RestoreSpec{},
+			name: "restore", spec: v1alpha1.RestorePlan{},
 			fields: []string{
 				"allowMounted",
 				"createPVC",
@@ -323,20 +323,20 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 			},
 		},
 		{
-			name: "rename", spec: v1alpha1.RenameSpec{},
+			name: "rename", spec: v1alpha1.RenamePlan{},
 			fields: []string{
 				"destinationPVC", "sourcePV", "sourcePVC", "sourceTemplate",
 			},
 		},
 		{
-			name: "move", spec: v1alpha1.MoveSpec{},
+			name: "move", spec: v1alpha1.MovePlan{},
 			fields: []string{
 				"destinationNamespace", "identity", "sessionNamespace",
 				"sourceNamespace",
 			},
 		},
 		{
-			name: "cluster migration", spec: v1alpha1.ClusterMigrationSpec{},
+			name: "cluster migration", spec: v1alpha1.ClusterMigrationPlan{},
 			fields: []string{
 				"deleteExtraneous", "destinationNamespace", "sessionNamespace",
 				"skipSourceUsageCheck", "sourceNamespace", "sourceNode", "strategies",
@@ -344,7 +344,7 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 			},
 		},
 		{
-			name: "cluster pod migration", spec: v1alpha1.ClusterPodMigrationSpec{},
+			name: "cluster pod migration", spec: v1alpha1.ClusterPodMigrationPlan{},
 			fields: []string{
 				"deleteExtraneous", "openebsLvmEnableShared", "precopyPasses",
 				"sessionNamespace", "skipSourceUsageCheck", "sourceNamespace", "sourceNode",
@@ -353,14 +353,14 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 			},
 		},
 		{
-			name: "cluster reservation", spec: v1alpha1.ClusterReservationSpec{},
+			name: "cluster reservation", spec: v1alpha1.ClusterReservationPlan{},
 			fields: []string{
 				"destinationNamespace", "sessionNamespace", "skipSourceUsageCheck",
 				"sourceNamespace", "targetNode", "toolImage", "volumes",
 			},
 		},
 		{
-			name: "cluster copy", spec: v1alpha1.ClusterCopySpec{},
+			name: "cluster copy", spec: v1alpha1.ClusterCopyPlan{},
 			fields: []string{
 				"deleteExtraneous", "destinationNamespace", "online", "sessionNamespace",
 				"skipSourceUsageCheck", "sourceNamespace", "sourceNode", "strategies",
@@ -565,9 +565,9 @@ func TestTransferDestinationIdentityIsStatusOwned(t *testing.T) {
 		Volumes: []domain.VolumeStatus{{SourcePVCName: "data", Reserved: true}},
 	}
 
-	apiSpec := v1alpha1.CopySpecFromDomain(spec)
+	apiSpec := v1alpha1.CopyPlanFromDomain(spec)
 	if apiSpec.VerifyChecksum {
-		t.Fatal("CopySpec enabled verifyChecksum by default")
+		t.Fatal("CopyPlan enabled verifyChecksum by default")
 	}
 
 	data, err := json.Marshal(apiSpec)
@@ -591,19 +591,19 @@ func TestTransferDestinationIdentityIsStatusOwned(t *testing.T) {
 	apiStatus.ApplyToDomainSpec(&restored)
 
 	if restored.WorkflowOptions().VerifyChecksum {
-		t.Fatal("CopySpec conversion enabled verifyChecksum by default")
+		t.Fatal("CopyPlan conversion enabled verifyChecksum by default")
 	}
 
 	spec.Copy.VerifyChecksum = true
 
-	apiSpec = v1alpha1.CopySpecFromDomain(spec)
+	apiSpec = v1alpha1.CopyPlanFromDomain(spec)
 
 	if !apiSpec.VerifyChecksum {
-		t.Fatal("CopySpec did not preserve explicit verifyChecksum=true")
+		t.Fatal("CopyPlan did not preserve explicit verifyChecksum=true")
 	}
 
 	if enabled := apiSpec.Domain("app"); !enabled.WorkflowOptions().VerifyChecksum {
-		t.Fatal("CopySpec conversion changed explicit verifyChecksum=true")
+		t.Fatal("CopyPlan conversion changed explicit verifyChecksum=true")
 	}
 
 	volume := restored.Volumes[0]
@@ -627,9 +627,9 @@ func TestClusterCopyVerifyChecksumRoundTrip(t *testing.T) {
 		domain.SessionWorkflowOptions{},
 	)
 
-	apiSpec := v1alpha1.ClusterCopySpecFromDomain(spec)
+	apiSpec := v1alpha1.ClusterCopyPlanFromDomain(spec)
 	if apiSpec.VerifyChecksum {
-		t.Fatal("ClusterCopySpec enabled verifyChecksum by default")
+		t.Fatal("ClusterCopyPlan enabled verifyChecksum by default")
 	}
 
 	data, err := json.Marshal(apiSpec)
@@ -638,19 +638,19 @@ func TestClusterCopyVerifyChecksumRoundTrip(t *testing.T) {
 	}
 
 	if strings.Contains(string(data), `"verifyChecksum":`) {
-		t.Fatalf("ClusterCopySpec serialized default verifyChecksum: %s", data)
+		t.Fatalf("ClusterCopyPlan serialized default verifyChecksum: %s", data)
 	}
 
 	if apiSpec.Domain().WorkflowOptions().VerifyChecksum {
-		t.Fatal("ClusterCopySpec conversion enabled verifyChecksum by default")
+		t.Fatal("ClusterCopyPlan conversion enabled verifyChecksum by default")
 	}
 
 	spec.Copy.VerifyChecksum = true
 
-	apiSpec = v1alpha1.ClusterCopySpecFromDomain(spec)
+	apiSpec = v1alpha1.ClusterCopyPlanFromDomain(spec)
 
 	if !apiSpec.VerifyChecksum || !apiSpec.Domain().WorkflowOptions().VerifyChecksum {
-		t.Fatal("ClusterCopySpec did not preserve explicit verifyChecksum=true")
+		t.Fatal("ClusterCopyPlan did not preserve explicit verifyChecksum=true")
 	}
 }
 
@@ -669,7 +669,7 @@ func TestPodMigrationCurrentPodIdentityIsStatusOwned(t *testing.T) {
 		1,
 		false,
 	)
-	apiSpec := v1alpha1.PodMigrationSpecFromDomain(spec)
+	apiSpec := v1alpha1.PodMigrationPlanFromDomain(spec)
 
 	spec.MigratePod.Workload.Pod.UID = "resumed-pod-uid"
 	spec.MigratePod.Workload.AffectedPods[0].UID = "resumed-pod-uid"
@@ -709,7 +709,7 @@ func TestPodMigrationStatusDoesNotClearImmutableAffectedPodsSnapshot(t *testing.
 		1,
 		false,
 	)
-	apiSpec := v1alpha1.PodMigrationSpecFromDomain(spec)
+	apiSpec := v1alpha1.PodMigrationPlanFromDomain(spec)
 	status := v1alpha1.PodMigrationStatus{Workload: &v1alpha1.PodMigrationWorkloadStatus{
 		Pod: &v1alpha1.LocalResourceReference{Name: "writer", UID: "resumed-uid"},
 	}}
@@ -802,7 +802,7 @@ func TestRestoreDestinationIdentityIsStatusOwned(t *testing.T) {
 	spec.Restore.BackupRepository = "archive"
 	spec.Restore.Name = "daily"
 
-	apiSpec := v1alpha1.RestoreSpecFromDomain(spec)
+	apiSpec := v1alpha1.RestorePlanFromDomain(spec)
 
 	encoded, err := json.Marshal(apiSpec)
 	if err != nil {
@@ -810,15 +810,20 @@ func TestRestoreDestinationIdentityIsStatusOwned(t *testing.T) {
 	}
 
 	for _, forbidden := range []string{
-		`"destinationPV":`, `"uid":"pvc-uid"`, `"resourceVersion":"17"`,
+		`"destinationPV":`,
 	} {
 		if strings.Contains(string(encoded), forbidden) {
-			t.Fatalf("controller checkpoint leaked into Restore spec: %s", encoded)
+			t.Fatalf("runtime PV checkpoint leaked into Restore plan: %s", encoded)
 		}
 	}
 
 	status := v1alpha1.RestoreStatusFromDomain(domain.SessionStatus{}, spec)
+
 	restored := apiSpec.Domain("app")
+	if restored.Restore.DestinationPVC.UID != "pvc-uid" {
+		t.Fatal("resolved destination UID missing from plan")
+	}
+
 	status.ApplyToDomainSpec(&restored)
 
 	if restored.Restore.DestinationPVC.UID != "pvc-uid" ||
@@ -860,56 +865,56 @@ func TestEveryOperationSpecRoundTripsToItsSessionType(t *testing.T) {
 			name: "migration",
 			want: domain.SessionTypeMigrate,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.MigrationSpecFromDomain(s).Domain("app")
+				return v1alpha1.MigrationPlanFromDomain(s).Domain("app")
 			},
 		},
 		{
 			name: "pod migration",
 			want: domain.SessionTypeMigratePod,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.PodMigrationSpecFromDomain(s).Domain("app")
+				return v1alpha1.PodMigrationPlanFromDomain(s).Domain("app")
 			},
 		},
 		{
 			name: "reservation",
 			want: domain.SessionTypeReserve,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.ReservationSpecFromDomain(s).Domain("app")
+				return v1alpha1.ReservationPlanFromDomain(s).Domain("app")
 			},
 		},
 		{
 			name: "copy",
 			want: domain.SessionTypeCopy,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.CopySpecFromDomain(s).Domain("app")
+				return v1alpha1.CopyPlanFromDomain(s).Domain("app")
 			},
 		},
 		{
 			name: "backup",
 			want: domain.SessionTypeBackup,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.BackupSpecFromDomain(s).Domain("app")
+				return v1alpha1.BackupPlanFromDomain(s).Domain("app")
 			},
 		},
 		{
 			name: "restore",
 			want: domain.SessionTypeRestore,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.RestoreSpecFromDomain(s).Domain("app")
+				return v1alpha1.RestorePlanFromDomain(s).Domain("app")
 			},
 		},
 		{
 			name: "rename",
 			want: domain.SessionTypeRename,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.RenameSpecFromDomain(s).Domain("app")
+				return v1alpha1.RenamePlanFromDomain(s).Domain("app")
 			},
 		},
 		{
 			name: "move",
 			want: domain.SessionTypeMove,
 			convert: func(s domain.SessionSpec) domain.SessionSpec {
-				return v1alpha1.MoveSpecFromDomain(s).Domain()
+				return v1alpha1.MovePlanFromDomain(s).Domain()
 			},
 		},
 	}
@@ -940,7 +945,7 @@ func TestEveryOperationSpecRoundTripsToItsSessionType(t *testing.T) {
 }
 
 func TestObjectTransferSpecsUseWorkflowNamespace(t *testing.T) {
-	backup := v1alpha1.BackupSpec{
+	backup := v1alpha1.BackupPlan{
 		SourcePVC: v1alpha1.LocalResourceReference{Name: "data"},
 		SourcePV:  v1alpha1.LocalResourceReference{Name: "pv", UID: "pv-uid"},
 		Name:      "backup",
@@ -956,7 +961,7 @@ func TestObjectTransferSpecsUseWorkflowNamespace(t *testing.T) {
 		t.Fatalf("backup PVC namespace=%q", got)
 	}
 
-	restore := v1alpha1.RestoreSpec{
+	restore := v1alpha1.RestorePlan{
 		DestinationPVC: v1alpha1.LocalResourceReference{Name: "data"},
 		Name:           "backup",
 	}
@@ -974,8 +979,8 @@ func TestObjectTransferSpecsUseWorkflowNamespace(t *testing.T) {
 
 func TestObjectTransferSpecsDoNotExposeMigrationNamespaces(t *testing.T) {
 	for _, spec := range []any{
-		v1alpha1.BackupSpec{},
-		v1alpha1.RestoreSpec{},
+		v1alpha1.BackupPlan{},
+		v1alpha1.RestorePlan{},
 	} {
 		data, err := json.Marshal(spec)
 		if err != nil {
@@ -1018,7 +1023,7 @@ func TestPVCIdentitySpecsExposeDedicatedEndpoints(t *testing.T) {
 		{
 			name: "rename",
 			kind: "Rename",
-			data: v1alpha1.RenameSpecFromDomain(domain.SessionSpec{
+			data: v1alpha1.RenamePlanFromDomain(domain.SessionSpec{
 				SessionCommon: domain.SessionCommon{
 					SourceNamespace: "source", DestinationNamespace: "source",
 					SessionNamespace: "system", Volumes: []domain.VolumeSpec{volume},
@@ -1026,7 +1031,7 @@ func TestPVCIdentitySpecsExposeDedicatedEndpoints(t *testing.T) {
 				Type: domain.SessionTypeRename,
 			}),
 			got: func() domain.SessionSpec {
-				return v1alpha1.RenameSpecFromDomain(domain.SessionSpec{
+				return v1alpha1.RenamePlanFromDomain(domain.SessionSpec{
 					SessionCommon: domain.SessionCommon{
 						SourceNamespace: "source", DestinationNamespace: "source",
 						SessionNamespace: "system", Volumes: []domain.VolumeSpec{volume},
@@ -1038,7 +1043,7 @@ func TestPVCIdentitySpecsExposeDedicatedEndpoints(t *testing.T) {
 		{
 			name: "move",
 			kind: "Move",
-			data: v1alpha1.MoveSpecFromDomain(domain.SessionSpec{
+			data: v1alpha1.MovePlanFromDomain(domain.SessionSpec{
 				SessionCommon: domain.SessionCommon{
 					SourceNamespace: "source", DestinationNamespace: "destination",
 					SessionNamespace: "system", Volumes: []domain.VolumeSpec{volume},
@@ -1046,7 +1051,7 @@ func TestPVCIdentitySpecsExposeDedicatedEndpoints(t *testing.T) {
 				Type: domain.SessionTypeMove,
 			}),
 			got: func() domain.SessionSpec {
-				return v1alpha1.MoveSpecFromDomain(domain.SessionSpec{
+				return v1alpha1.MovePlanFromDomain(domain.SessionSpec{
 					SessionCommon: domain.SessionCommon{
 						SourceNamespace: "source", DestinationNamespace: "destination",
 						SessionNamespace: "system", Volumes: []domain.VolumeSpec{volume},
@@ -1106,7 +1111,7 @@ func TestPVCIdentitySpecsRoundTripSourceMetadataWithoutSharing(t *testing.T) {
 		Type: domain.SessionTypeRename,
 	}
 
-	apiSpec := v1alpha1.RenameSpecFromDomain(spec)
+	apiSpec := v1alpha1.RenamePlanFromDomain(spec)
 	apiSpec.SourceTemplate.Metadata.Labels["app"] = "changed"
 	apiSpec.SourceTemplate.Metadata.OwnerReferences[0].Name = "changed"
 
@@ -1138,7 +1143,7 @@ func TestMoveRoundTripsNamespaceRoles(t *testing.T) {
 		Type: domain.SessionTypeMove,
 	}
 
-	apiSpec := v1alpha1.MoveSpecFromDomain(spec)
+	apiSpec := v1alpha1.MovePlanFromDomain(spec)
 
 	restored := apiSpec.Domain()
 	if restored.SourceNamespace != "source" ||
@@ -1151,7 +1156,7 @@ func TestMoveRoundTripsNamespaceRoles(t *testing.T) {
 }
 
 func TestClusterPodMigrationDerivesDestinationNamespace(t *testing.T) {
-	spec := v1alpha1.ClusterPodMigrationSpec{
+	spec := v1alpha1.ClusterPodMigrationPlan{
 		SourceNamespace:    "source",
 		TemporaryNamespace: "staging",
 		SessionNamespace:   "control",
@@ -1169,7 +1174,7 @@ func TestClusterPodMigrationDerivesDestinationNamespace(t *testing.T) {
 		t.Fatalf("ClusterPodMigration namespace conversion=%#v", domainSpec)
 	}
 
-	encoded, err := json.Marshal(v1alpha1.ClusterPodMigrationSpecFromDomain(domainSpec))
+	encoded, err := json.Marshal(v1alpha1.ClusterPodMigrationPlanFromDomain(domainSpec))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1194,7 +1199,7 @@ func TestClusterTransferSpecsResolveDestinationStorageNamespace(t *testing.T) {
 			name:          "migration",
 			wantTemporary: "staging", wantFinalDestination: "destination",
 			domain: func() domain.SessionSpec {
-				return v1alpha1.ClusterMigrationSpec{
+				return v1alpha1.ClusterMigrationPlan{
 					SourceNamespace: "source", TemporaryNamespace: "staging",
 					DestinationNamespace: "destination", SessionNamespace: "control",
 					Volumes: []v1alpha1.ClusterVolumeSpec{volume},
@@ -1205,7 +1210,7 @@ func TestClusterTransferSpecsResolveDestinationStorageNamespace(t *testing.T) {
 			name:          "reservation",
 			wantTemporary: "reserved", wantFinalDestination: "reserved",
 			domain: func() domain.SessionSpec {
-				return v1alpha1.ClusterReservationSpec{
+				return v1alpha1.ClusterReservationPlan{
 					SourceNamespace: "source", DestinationNamespace: "reserved",
 					SessionNamespace: "control",
 					Volumes:          []v1alpha1.ClusterVolumeSpec{volume},
@@ -1216,7 +1221,7 @@ func TestClusterTransferSpecsResolveDestinationStorageNamespace(t *testing.T) {
 			name:          "copy",
 			wantTemporary: "copied", wantFinalDestination: "copied",
 			domain: func() domain.SessionSpec {
-				return v1alpha1.ClusterCopySpec{
+				return v1alpha1.ClusterCopyPlan{
 					SourceNamespace: "source", DestinationNamespace: "copied",
 					SessionNamespace: "control",
 					Volumes:          []v1alpha1.ClusterVolumeSpec{volume},
@@ -1304,10 +1309,11 @@ func TestBackupRepositoryUsesTypedBackendUnion(t *testing.T) {
 
 func TestOptionalObjectReferencesAreOmittedWhenUnset(t *testing.T) {
 	object := v1alpha1.PodMigration{
-		Spec: v1alpha1.PodMigrationSpec{
-			Workload: v1alpha1.WorkloadSpec{Adapter: v1alpha1.WorkloadStandalone},
-		},
+		Spec: v1alpha1.PodMigrationSpec{Pod: v1alpha1.LocalResourceReference{Name: "writer"}},
 		Status: v1alpha1.PodMigrationStatus{
+			Plan: &v1alpha1.PodMigrationPlan{
+				Workload: v1alpha1.WorkloadSpec{Adapter: v1alpha1.WorkloadStandalone},
+			},
 			Volumes: []v1alpha1.PodMigrationVolumeStatus{{
 				Activation: v1alpha1.VolumeActivationStatus{},
 			}},

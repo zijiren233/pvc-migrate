@@ -59,6 +59,10 @@ func (p *Planner) PlanOfflineMigration(
 		VerifyChecksum:        options.VerifyChecksum,
 		DeleteExtraneous:      options.DeleteExtraneous,
 	})
+	if p.requestOnly {
+		return p.intentPlan(state.options)
+	}
+
 	p.validatePlanInputs(state.plan, state.options)
 	p.prepareOfflineMigration(&state)
 

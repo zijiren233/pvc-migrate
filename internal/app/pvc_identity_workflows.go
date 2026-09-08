@@ -155,6 +155,10 @@ func (s *Service) validatePVCIdentityWorkflowResume(
 		return err
 	}
 
+	if session.PlanPending {
+		return validateUnplannedResume(session, phase)
+	}
+
 	return s.validatePVCIdentityResume(ctx, session, phase, operation)
 }
 

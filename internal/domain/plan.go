@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"encoding/json"
+
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 )
@@ -205,6 +207,7 @@ type StorageCapacityReport struct {
 }
 
 type MigrationPlan struct {
+	Intent               json.RawMessage         `json:"-"                         yaml:"-"`
 	APIVersion           string                  `json:"apiVersion"                yaml:"apiVersion"`
 	Kind                 string                  `json:"kind"                      yaml:"kind"`
 	SessionID            string                  `json:"sessionID"                 yaml:"sessionID"`

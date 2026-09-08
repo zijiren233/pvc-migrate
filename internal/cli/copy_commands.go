@@ -147,7 +147,8 @@ func (r *rootState) newCopyCommand() *cobra.Command {
 				}
 
 				if err == nil {
-					plan, err = runtime.planner.PlanCopy(ctx, options)
+					plan, err = runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+						PlanCopy(ctx, options)
 				}
 
 				if err == nil {

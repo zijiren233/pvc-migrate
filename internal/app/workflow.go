@@ -43,6 +43,10 @@ func (s *Service) validateWorkflowResume(
 		return err
 	}
 
+	if session.PlanPending {
+		return validateUnplannedResume(session, phase)
+	}
+
 	return validate(ctx, session, phase)
 }
 
@@ -166,4 +170,11 @@ func persistedResumePhase(session *domain.Session) (domain.Phase, error) {
 	}
 
 	return phase, nil
+}
+
+func validateUnplannedResume(session *domain.Session, phase domain.Phase) error {
+	if phase != domain.PhasePlanned {
+		return invalidWorkflowResumePhase(phase, session.Spec.Operation())
+	}
+	return nil
 }

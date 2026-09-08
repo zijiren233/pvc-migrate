@@ -66,7 +66,7 @@ func TestDeletionSpecConflictLive(t *testing.T) {
 
 	if original.DeletionTimestamp == nil || original.Status.Phase != "WarmCopied" ||
 		len(original.Spec.Volumes) != 1 ||
-		original.Spec.Volumes[0].SourceReclaimPolicy != "Retain" {
+		original.Spec.DestinationStorageClass == "changed-class" {
 		t.Fatal("requires deleting completed Copy with retained source")
 	}
 
@@ -173,7 +173,7 @@ func (c *deletionRaceClient) Get(
 			return err
 		}
 
-		changed.Spec.Volumes[0].SourceReclaimPolicy = "Delete"
+		changed.Spec.DestinationStorageClass = "changed-class"
 		if err := c.Update(ctx, changed); err != nil {
 			return err
 		}

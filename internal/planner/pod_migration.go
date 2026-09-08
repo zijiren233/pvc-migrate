@@ -66,6 +66,10 @@ func (p *Planner) PlanPodMigration(
 		PrecopyPasses:          options.PrecopyPasses,
 		OpenEBSLVMEnableShared: options.OpenEBSLVMEnableShared,
 	})
+	if p.requestOnly {
+		return p.intentPlan(state.options)
+	}
+
 	p.validatePlanInputs(state.plan, state.options)
 
 	if err := p.discoverPlanWorkload(ctx, &state); err != nil {

@@ -358,7 +358,8 @@ func (r *rootState) runOfflineMigrateCommand(
 	)
 	options.StagingNamespace = options.TemporaryNamespace
 
-	plan, err := runtime.planner.PlanOfflineMigration(ctx, options)
+	plan, err := runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+		PlanOfflineMigration(ctx, options)
 	if err != nil {
 		return reportPlanningError(cmd, err)
 	}
