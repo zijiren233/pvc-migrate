@@ -41,7 +41,7 @@ helm upgrade --install pvc-migrate \
   oci://ghcr.io/labring-sigs/pvc-migrate/charts/pvc-migrate \
   --version "$CHART_VERSION" --namespace pvc-migrate-system \
   --rollback-on-failure --wait --timeout 10m --history-max 10
-helm test pvc-migrate --namespace pvc-migrate-system --logs
+helm test pvc-migrate --namespace pvc-migrate-system --logs --timeout 10m
 ```
 
 The controller and tool image versions automatically match the selected chart
@@ -52,6 +52,11 @@ It never creates namespaces. For Helm 3.17+, use `--atomic` instead of
 `--rollback-on-failure`. See [chart operations](charts/pvc-migrate/README.md)
 for source-chart installation, values, CRD upgrades, adoption of existing
 manifests, and rollback.
+
+Each workflow kind has separate execution, recovery, and deletion queues.
+After leader replacement, interrupted workload pauses and storage cutovers can
+resume while new transfers run. Failed workflows still require explicit resume;
+the same workflow remains fenced by its session Lease.
 
 The default ClusterRole excludes Pod exec. KubeBlocks MongoDB native
 switchover needs it only in approved source namespaces. Add to your values:

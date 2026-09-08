@@ -244,7 +244,12 @@ func (r *WorkflowReconciler) reconcile(
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	r.activeWorkflows.Store(session.BackendUID, cancel)
+	// Separate queues may observe the same workflow during a phase or spec
+	// change. Keep the running worker's cancellation handle until it exits.
+	if _, running := r.activeWorkflows.LoadOrStore(session.BackendUID, cancel); running {
+		cancel()
+		return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+	}
 	defer func() {
 		interrupted := errors.Is(ctx.Err(), context.Canceled)
 
@@ -310,15 +315,7 @@ func (r *WorkflowReconciler) reconcile(
 
 	// Persist the controller-owned initial checkpoint before business execution.
 	if session.Status.ObservedGeneration == 0 {
-		if err := initializeUnobservedStatus(ctx, r.store, session); err != nil {
-			if domain.CategoryOf(err) == domain.ErrorConflict {
-				return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
-			}
-
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+		return r.reconcileInitialCheckpoint(ctx, session)
 	}
 
 	if terminalSession(session) {
@@ -357,6 +354,21 @@ func (r *WorkflowReconciler) reconcile(
 		}
 
 		return r.checkpointBusinessFailure(ctx, runner, session, err, request)
+	}
+
+	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+}
+
+func (r *WorkflowReconciler) reconcileInitialCheckpoint(
+	ctx context.Context,
+	session *domain.Session,
+) (reconcile.Result, error) {
+	if err := initializeUnobservedStatus(ctx, r.store, session); err != nil {
+		if domain.CategoryOf(err) == domain.ErrorConflict {
+			return reconcile.Result{RequeueAfter: time.Second}, nil
+		}
+
+		return reconcile.Result{}, err
 	}
 
 	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
@@ -540,17 +552,22 @@ func (r *WorkflowReconciler) SetupWithManager(manager ctrl.Manager) error {
 			return fmt.Errorf("register %s informer: %w", kind, err)
 		}
 
-		// Recovery of a paused workload must not wait behind another long
-		// migration. Both queues share the informer and the session Lease fence.
-		for _, deleting := range []bool{false, true} {
-			name := "workflow-" + strings.ToLower(string(kind))
-			if deleting {
-				name += "-deletion"
-			}
+		// Interrupted cutovers and deletion must make progress while new
+		// transfers run. All queues share the informer and session Lease fence.
+		queues := []struct {
+			suffix string
+			filter predicate.Predicate
+		}{
+			{filter: workflowQueuePredicate(false, r.cancelWorkflow)},
+			{suffix: "-recovery", filter: workflowRecoveryQueuePredicate(r.cancelWorkflow)},
+			{suffix: "-deletion", filter: workflowQueuePredicate(true, r.cancelWorkflow)},
+		}
+		for _, queue := range queues {
+			name := "workflow-" + strings.ToLower(string(kind)) + queue.suffix
 
 			if err := ctrl.NewControllerManagedBy(manager).
 				Named(name).
-				For(object, builder.WithPredicates(workflowQueuePredicate(deleting, r.cancelWorkflow))).
+				For(object, builder.WithPredicates(queue.filter)).
 				Complete(&kindWorkflowReconciler{parent: r, kind: kind}); err != nil {
 				return err
 			}
@@ -578,9 +595,42 @@ func workflowQueuePredicate(deleting bool, onDelete func(crclient.Object)) predi
 	return predicate.And(
 		workflowEventPredicate(onDelete),
 		predicate.NewPredicateFuncs(func(object crclient.Object) bool {
-			return (object.GetDeletionTimestamp() != nil) == deleting
+			if object.GetDeletionTimestamp() != nil {
+				return deleting
+			}
+			return !deleting && !workflowNeedsRecovery(object)
 		}),
 	)
+}
+
+func workflowRecoveryQueuePredicate(onDelete func(crclient.Object)) predicate.Predicate {
+	return predicate.And(
+		workflowEventPredicate(onDelete),
+		predicate.NewPredicateFuncs(func(object crclient.Object) bool {
+			return object.GetDeletionTimestamp() == nil && workflowNeedsRecovery(object)
+		}),
+	)
+}
+
+func workflowNeedsRecovery(object crclient.Object) bool {
+	status := workflowStatus(object)
+
+	phase := domain.Phase(status.Phase)
+	if phase == domain.PhaseFailed {
+		// Failed workflows still require explicit resume. Routing their spec
+		// changes here also keeps workload restoration out of the transfer queue.
+		phase = domain.Phase(status.ResumeFrom)
+	}
+
+	switch phase {
+	case domain.PhasePausing, domain.PhasePaused, domain.PhaseFinalSyncing,
+		domain.PhaseFinalSynced, domain.PhaseActivating, domain.PhaseActivated,
+		domain.PhaseResuming, domain.PhaseRollingBack, domain.PhaseAborting,
+		domain.PhaseRenaming, domain.PhaseMoving:
+		return true
+	default:
+		return false
+	}
 }
 
 func workflowEventPredicate(onDelete ...func(crclient.Object)) predicate.Predicate {
