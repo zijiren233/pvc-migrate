@@ -64,3 +64,35 @@ func TestCRDCreatePreservesMinimalIntent(t *testing.T) {
 		t.Fatalf("submission manufactured identity constraints: %+v", volume)
 	}
 }
+
+func TestCRDCreatePodIntentDefersWorkloadIdentityValidation(t *testing.T) {
+	for _, kind := range []domain.ControllerKind{domain.ControllerKindPodMigration, domain.ControllerKindClusterPodMigration} {
+		t.Run(string(kind), func(t *testing.T) {
+			var object crclient.Object = &v1alpha1.PodMigration{
+				ObjectMeta: metav1.ObjectMeta{Name: "minimal-pod", Namespace: "app"},
+				Spec:       v1alpha1.PodMigrationSpec{Pod: v1alpha1.LocalResourceReference{Name: "writer"}},
+			}
+			if kind == domain.ControllerKindClusterPodMigration {
+				object = &v1alpha1.ClusterPodMigration{
+					ObjectMeta: metav1.ObjectMeta{Name: "minimal-pod"},
+					Spec: v1alpha1.ClusterPodMigrationSpec{
+						SourceNamespace: "app", TemporaryNamespace: "staging",
+						PodMigrationSpec: v1alpha1.PodMigrationSpec{Pod: v1alpha1.LocalResourceReference{Name: "writer"}},
+					},
+				}
+			}
+			session, err := DecodeWorkflow(object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := NewCRDSessionStore(newCRDTestClient())
+			if err := store.Create(t.Context(), session); err != nil {
+				t.Fatalf("minimal Pod request rejected before discovery: %v", err)
+			}
+			session.PlanPending = false
+			if ControllerSessionSupported(session) {
+				t.Fatal("execution accepted an unresolved workload identity")
+			}
+		})
+	}
+}

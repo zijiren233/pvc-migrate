@@ -121,8 +121,10 @@ func controllerNamespaceBoundaryErrorForResource(
 			}
 		}
 
-		if err := controllerWorkloadIdentityError(workload); err != nil {
-			return err
+		if !session.PlanPending {
+			if err := controllerWorkloadIdentityError(workload); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -279,8 +281,10 @@ func validateClusterWorkflowReferences(session *domain.Session) error {
 			}
 		}
 
-		if err := controllerWorkloadIdentityError(workload); err != nil {
-			return err
+		if !session.PlanPending {
+			if err := controllerWorkloadIdentityError(workload); err != nil {
+				return err
+			}
 		}
 	}
 
