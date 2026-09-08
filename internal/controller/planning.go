@@ -87,6 +87,11 @@ func (r *WorkflowReconciler) planWorkflow(
 
 	*session = *latest
 
+	repository, err := r.planRepositoryBinding(ctx, session)
+	if err != nil {
+		return r.failPlanning(ctx, session, err)
+	}
+
 	spec, err := r.planner(ctx, session, r.trustedToolImage)
 	if err != nil {
 		return r.failPlanning(ctx, session, err)
@@ -99,6 +104,7 @@ func (r *WorkflowReconciler) planWorkflow(
 	planned := domain.NewSession(session.ID, spec, time.Now())
 	session.Spec = planned.Spec
 	session.Status = planned.Status
+	session.Status.BackupRepository = repository
 
 	session.PlanPending = false
 	if workload := session.Spec.Workload(); workload.Adapter == domain.WorkloadStandalone &&
@@ -130,6 +136,32 @@ func (r *WorkflowReconciler) planWorkflow(
 	)
 
 	return nil
+}
+
+// Validate repository dependencies before freezing intent so configuration
+// errors can be corrected in spec. Only resource identities enter status.
+func (r *WorkflowReconciler) planRepositoryBinding(
+	ctx context.Context,
+	session *domain.Session,
+) (*domain.BackupRepositoryBindingStatus, error) {
+	var repository, name string
+	switch {
+	case session.Spec.Backup != nil:
+		repository, name = session.Spec.Backup.BackupRepository, session.Spec.Backup.Name
+	case session.Spec.Restore != nil:
+		repository, name = session.Spec.Restore.BackupRepository, session.Spec.Restore.Name
+	default:
+		return nil, nil
+	}
+
+	config, err := r.runner(session.Spec.SessionNamespace).backupRepositoryConfig(
+		ctx, session, repository, name, "", "", "", "", "", false, "", "",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return s3RepositoryBinding(config), nil
 }
 
 func (r *WorkflowReconciler) failPlanning(

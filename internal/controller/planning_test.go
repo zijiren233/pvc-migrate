@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	v1alpha1 "github.com/labring-sigs/pvc-migrate/api/v1alpha1"
@@ -46,7 +47,7 @@ func planningFixture(
 	}
 	client := crfake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(object).
+		WithStatusSubresource(object, &v1alpha1.Backup{}, &v1alpha1.Restore{}).
 		WithObjects(object).
 		Build()
 	kc := clientfake.NewClientset(
@@ -73,6 +74,179 @@ func planningFixture(
 
 	return r, store, client, kc, reconcile.Request{
 		NamespacedName: crclient.ObjectKeyFromObject(object),
+	}
+}
+
+func TestRepositoryPlanningFailureAllowsCorrectedIntent(t *testing.T) {
+	for _, kind := range []domain.ControllerKind{domain.ControllerKindBackup, domain.ControllerKindRestore} {
+		for _, failure := range []string{"missing repository", "missing credentials", "unsupported backend"} {
+			t.Run(string(kind)+"/"+failure, func(t *testing.T) {
+				r, store, client, kc, request := planningFixture(t)
+				r.WithControllerClient(client)
+
+				if err := client.Delete(
+					t.Context(),
+					&v1alpha1.Copy{
+						ObjectMeta: metav1.ObjectMeta{Name: "planning", Namespace: "system"},
+					},
+				); err != nil {
+					t.Fatal(err)
+				}
+
+				metadata := metav1.ObjectMeta{
+					Name:       "planning",
+					Namespace:  "system",
+					UID:        "workflow-uid",
+					Generation: 1,
+				}
+
+				var object crclient.Object = &v1alpha1.Backup{ObjectMeta: metadata, Spec: v1alpha1.BackupSpec{
+					SourcePVC: v1alpha1.LocalResourceReference{
+						Name: "data",
+					},
+					Name:          "point",
+					RepositoryRef: v1alpha1.LocalObjectReference{Name: "broken"},
+				}}
+				if kind == domain.ControllerKindRestore {
+					object = &v1alpha1.Restore{ObjectMeta: metadata, Spec: v1alpha1.RestoreSpec{
+						DestinationPVC: v1alpha1.LocalResourceReference{
+							Name: "data",
+						},
+						Name:          "point",
+						RepositoryRef: v1alpha1.LocalObjectReference{Name: "broken"},
+					}}
+				}
+
+				if err := client.Create(t.Context(), object); err != nil {
+					t.Fatal(err)
+				}
+
+				repository := &v1alpha1.BackupRepository{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:       "broken",
+						Namespace:  "system",
+						UID:        "repository-uid",
+						Generation: 3,
+					},
+					Spec: v1alpha1.BackupRepositorySpec{
+						Type: v1alpha1.BackupRepositoryTypeS3,
+						S3: &v1alpha1.S3BackupRepositorySpec{
+							Bucket:   "backups",
+							Endpoint: "https://s3.example.test",
+							CredentialsSecret: v1alpha1.BackupRepositorySecretReference{
+								Name: "credentials",
+							},
+						},
+					},
+				}
+				if failure == "unsupported backend" {
+					repository.Spec.Type = v1alpha1.BackupRepositoryTypePVC
+				}
+
+				if failure != "missing repository" {
+					if err := client.Create(t.Context(), repository); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				calls := 0
+				r.WithPlanner(
+					func(_ context.Context, session *domain.Session, _ string) (domain.SessionSpec, error) {
+						calls++
+
+						if session.Spec.Backup != nil {
+							session.Spec.Backup.SourcePVC.UID = "source-uid"
+							session.Spec.Backup.SourcePV = domain.ObjectReference{
+								Name: "source-pv",
+								UID:  "source-pv-uid",
+							}
+						}
+
+						return session.Spec, nil
+					},
+				)
+
+				if _, err := r.reconcile(t.Context(), request, kind); err != nil {
+					t.Fatal(err)
+				}
+
+				failed, err := store.GetByKind(t.Context(), "system", "planning", kind)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if !failed.PlanPending || failed.Status.Phase != domain.PhaseFailed || calls != 0 ||
+					!strings.Contains(failed.Status.Message, "BackupRepository") {
+					t.Fatalf(
+						"invalid repository froze the intent: pending=%v phase=%s calls=%d message=%s",
+						failed.PlanPending,
+						failed.Status.Phase,
+						calls,
+						failed.Status.Message,
+					)
+				}
+
+				repository.Name, repository.ResourceVersion = "corrected", ""
+
+				repository.Spec.Type = v1alpha1.BackupRepositoryTypeS3
+				if err := client.Create(t.Context(), repository); err != nil {
+					t.Fatal(err)
+				}
+
+				if _, err := kc.CoreV1().Secrets("system").Create(t.Context(), &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "credentials",
+						Namespace: "system",
+						UID:       "credentials-uid",
+					},
+					Data: map[string][]byte{
+						kube.BackupAccessKeyDataKey: []byte("access"),
+						kube.BackupSecretKeyDataKey: []byte("secret"),
+					},
+				}, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+
+				if err := client.Get(t.Context(), request.NamespacedName, object); err != nil {
+					t.Fatal(err)
+				}
+
+				switch workflow := object.(type) {
+				case *v1alpha1.Backup:
+					workflow.Spec.RepositoryRef.Name = repository.Name
+				case *v1alpha1.Restore:
+					workflow.Spec.RepositoryRef.Name = repository.Name
+				}
+
+				object.SetGeneration(2)
+
+				if err := client.Update(t.Context(), object); err != nil {
+					t.Fatal(err)
+				}
+
+				if _, err := r.reconcile(t.Context(), request, kind); err != nil {
+					t.Fatal(err)
+				}
+
+				planned, err := store.GetByKind(t.Context(), "system", "planning", kind)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				binding := planned.Status.BackupRepository
+				if planned.PlanPending || calls != 1 || binding == nil ||
+					binding.UID != repository.UID ||
+					binding.Generation != repository.Generation ||
+					binding.S3.CredentialsSecretUID != "credentials-uid" {
+					t.Fatalf(
+						"corrected repository was not planned and pinned: pending=%v calls=%d binding=%+v",
+						planned.PlanPending,
+						calls,
+						binding,
+					)
+				}
+			})
+		}
 	}
 }
 

@@ -169,8 +169,12 @@ restore have no cluster-scoped workflow resource, preventing an operator API
 from becoming an indirect cross-namespace credential path. The controller
 scopes object keys by cluster and workload namespace and pins repository
 UID/generation in workflow status, so replacing a repository requires a new
-workflow while in-place Secret rotation remains possible. Cross-cluster
-commands remain ConfigMap/session workflows because they require a second API
+workflow while in-place Secret rotation remains possible. Repository configuration
+and credentials are validated before the execution plan is frozen. Missing or
+invalid dependencies leave the intent editable; correct the spec or fix the
+dependency and resume. The plan commit also pins the repository and credential
+Secret identities. Cross-cluster commands remain ConfigMap/session workflows
+because they require a second API
 server identity.
 
 The bundled ClusterRole is controller-only. Tenant bindings should grant
