@@ -201,10 +201,15 @@ type PodMigrationPlan struct {
 // +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="volumes must contain at least one source PVC"
 type ReservationPlan struct {
 	// +kubebuilder:validation:MaxItems=1024
-	Volumes              []VolumeSpec `json:"volumes,omitempty"              yaml:"volumes,omitempty"`
-	TargetNode           string       `json:"targetNode,omitempty"           yaml:"targetNode,omitempty"`
-	ToolImage            string       `json:"toolImage,omitempty"            yaml:"toolImage,omitempty"`
-	SkipSourceUsageCheck bool         `json:"skipSourceUsageCheck,omitempty" yaml:"skipSourceUsageCheck,omitempty"`
+	Volumes    []VolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
+	SourceNode string       `json:"sourceNode,omitempty" yaml:"sourceNode,omitempty"`
+	TargetNode string       `json:"targetNode,omitempty" yaml:"targetNode,omitempty"`
+	ToolImage  string       `json:"toolImage,omitempty"  yaml:"toolImage,omitempty"`
+	// +kubebuilder:validation:MaxItems=32
+	Strategies           []string `json:"strategies,omitempty"           yaml:"strategies,omitempty"`
+	VerifyChecksum       bool     `json:"verifyChecksum,omitempty"       yaml:"verifyChecksum,omitempty"`
+	DeleteExtraneous     bool     `json:"deleteExtraneous,omitempty"     yaml:"deleteExtraneous,omitempty"`
+	SkipSourceUsageCheck bool     `json:"skipSourceUsageCheck,omitempty" yaml:"skipSourceUsageCheck,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="volumes must contain at least one source PVC"
@@ -536,8 +541,12 @@ func (s PodMigrationPlan) workflowOptions() domain.SessionWorkflowOptions {
 
 func (s ReservationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
+		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
 		ToolImage:            s.ToolImage,
+		Strategies:           append([]string(nil), s.Strategies...),
+		VerifyChecksum:       s.VerifyChecksum,
+		DeleteExtraneous:     s.DeleteExtraneous,
 		SkipSourceUsageCheck: s.SkipSourceUsageCheck,
 	}
 }
@@ -824,8 +833,12 @@ func ReservationPlanFromDomain(s domain.SessionSpec) ReservationPlan {
 
 	return ReservationPlan{
 		Volumes:              volumesFromDomain(s.Volumes),
+		SourceNode:           options.SourceNode,
 		TargetNode:           options.TargetNode,
 		ToolImage:            options.ToolImage,
+		Strategies:           append([]string(nil), options.Strategies...),
+		VerifyChecksum:       options.VerifyChecksum,
+		DeleteExtraneous:     options.DeleteExtraneous,
 		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
 	}
 }

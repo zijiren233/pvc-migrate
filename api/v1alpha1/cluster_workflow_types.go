@@ -100,10 +100,15 @@ type ClusterReservationPlan struct {
 	DestinationNamespace NamespaceName `json:"destinationNamespace" yaml:"destinationNamespace"`
 	SessionNamespace     NamespaceName `json:"sessionNamespace"     yaml:"sessionNamespace"`
 	// +kubebuilder:validation:MaxItems=1024
-	Volumes              []ClusterVolumeSpec `json:"volumes,omitempty"              yaml:"volumes,omitempty"`
-	TargetNode           string              `json:"targetNode,omitempty"           yaml:"targetNode,omitempty"`
-	ToolImage            string              `json:"toolImage,omitempty"            yaml:"toolImage,omitempty"`
-	SkipSourceUsageCheck bool                `json:"skipSourceUsageCheck,omitempty" yaml:"skipSourceUsageCheck,omitempty"`
+	Volumes    []ClusterVolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
+	SourceNode string              `json:"sourceNode,omitempty" yaml:"sourceNode,omitempty"`
+	TargetNode string              `json:"targetNode,omitempty" yaml:"targetNode,omitempty"`
+	ToolImage  string              `json:"toolImage,omitempty"  yaml:"toolImage,omitempty"`
+	// +kubebuilder:validation:MaxItems=32
+	Strategies           []string `json:"strategies,omitempty"           yaml:"strategies,omitempty"`
+	VerifyChecksum       bool     `json:"verifyChecksum,omitempty"       yaml:"verifyChecksum,omitempty"`
+	DeleteExtraneous     bool     `json:"deleteExtraneous,omitempty"     yaml:"deleteExtraneous,omitempty"`
+	SkipSourceUsageCheck bool     `json:"skipSourceUsageCheck,omitempty" yaml:"skipSourceUsageCheck,omitempty"`
 }
 
 // +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="volumes must contain at least one source PVC"

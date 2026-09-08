@@ -336,12 +336,23 @@ spec:
                 type: string
               plan:
                 properties:
+                  deleteExtraneous:
+                    type: boolean
                   skipSourceUsageCheck:
                     type: boolean
+                  sourceNode:
+                    type: string
+                  strategies:
+                    items:
+                      type: string
+                    maxItems: 32
+                    type: array
                   targetNode:
                     type: string
                   toolImage:
                     type: string
+                  verifyChecksum:
+                    type: boolean
                   volumes:
                     items:
                       description: |-

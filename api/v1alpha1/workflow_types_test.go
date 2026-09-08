@@ -280,7 +280,8 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 		{
 			name: "reservation", spec: v1alpha1.ReservationPlan{},
 			fields: []string{
-				"skipSourceUsageCheck", "targetNode", "toolImage", "volumes",
+				"deleteExtraneous", "skipSourceUsageCheck", "sourceNode", "strategies",
+				"targetNode", "toolImage", "verifyChecksum", "volumes",
 			},
 		},
 		{
@@ -355,8 +356,17 @@ func TestOperationSpecsHaveIndependentFieldContracts(t *testing.T) {
 		{
 			name: "cluster reservation", spec: v1alpha1.ClusterReservationPlan{},
 			fields: []string{
-				"destinationNamespace", "sessionNamespace", "skipSourceUsageCheck",
-				"sourceNamespace", "targetNode", "toolImage", "volumes",
+				"deleteExtraneous",
+				"destinationNamespace",
+				"sessionNamespace",
+				"skipSourceUsageCheck",
+				"sourceNamespace",
+				"sourceNode",
+				"strategies",
+				"targetNode",
+				"toolImage",
+				"verifyChecksum",
+				"volumes",
 			},
 		},
 		{

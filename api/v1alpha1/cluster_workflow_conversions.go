@@ -115,8 +115,12 @@ func (s ClusterPodMigrationPlan) workflowOptions() domain.SessionWorkflowOptions
 
 func (s ClusterReservationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
+		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
 		ToolImage:            s.ToolImage,
+		Strategies:           append([]string(nil), s.Strategies...),
+		VerifyChecksum:       s.VerifyChecksum,
+		DeleteExtraneous:     s.DeleteExtraneous,
 		SkipSourceUsageCheck: s.SkipSourceUsageCheck,
 	}
 }
@@ -261,8 +265,12 @@ func ClusterReservationPlanFromDomain(s domain.SessionSpec) ClusterReservationPl
 		DestinationNamespace: NamespaceName(s.TemporaryNamespace),
 		SessionNamespace:     NamespaceName(s.SessionNamespace),
 		Volumes:              clusterVolumesFromDomain(s.Volumes),
+		SourceNode:           options.SourceNode,
 		TargetNode:           options.TargetNode,
 		ToolImage:            options.ToolImage,
+		Strategies:           append([]string(nil), options.Strategies...),
+		VerifyChecksum:       options.VerifyChecksum,
+		DeleteExtraneous:     options.DeleteExtraneous,
 		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
 	}
 }
