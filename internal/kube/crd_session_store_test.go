@@ -1251,6 +1251,7 @@ func TestCRDSessionStoreRebindsReservationToCopy(t *testing.T) {
 		SessionNamespace: "system", Volumes: session.Spec.Volumes,
 	}, false, domain.SessionWorkflowOptions{})
 	createPlannedTestWorkflow(t, ctx, store, session)
+	session.Intent = []byte(`{"volumes":[{"sourcePVC":{"name":"data"}}]}`)
 
 	session.Spec = domain.NewSessionSpec(domain.OperationCopy, domain.SessionCommon{
 		SourceNamespace: "system", TemporaryNamespace: "system", DestinationNamespace: "system",
@@ -1271,6 +1272,11 @@ func TestCRDSessionStoreRebindsReservationToCopy(t *testing.T) {
 	loaded, err := store.Get(ctx, "system", session.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if loaded.Status.ExecutionIntentHash == "" ||
+		loaded.Status.ExecutionIntentHash != domain.ExecutionIntentHash(loaded.Intent) {
+		t.Fatalf("rebind fingerprint does not match Copy intent: %s", loaded.Intent)
 	}
 
 	if loaded.BackendResource != "Copy" || loaded.Spec.Type != domain.SessionTypeCopy ||

@@ -18,6 +18,10 @@ import (
 )
 
 func (s *Service) Plan(ctx context.Context, options Options) (*Plan, error) {
+	if err := domain.ValidateReclaimPolicies("", options.DestinationPVCReclaimPolicy); err != nil {
+		return nil, err
+	}
+
 	if err := s.validateClients(); err != nil {
 		return nil, err
 	}

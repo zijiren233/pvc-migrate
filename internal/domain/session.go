@@ -496,7 +496,18 @@ type SessionCommon struct {
 	DestinationNamespace string       `json:"destinationNamespace" yaml:"destinationNamespace"`
 	SessionNamespace     string       `json:"sessionNamespace"     yaml:"sessionNamespace"`
 	Volumes              []VolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
+	// SourcePVReclaimPolicy controls the old/source PV after a completed
+	// migration. Empty is treated as Retain for controller-owned deletion.
+	SourcePVReclaimPolicy       string `json:"sourcePVReclaimPolicy,omitempty"       yaml:"sourcePVReclaimPolicy,omitempty"`
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
 }
+
+const (
+	SourcePVReclaimRetain       = "Retain"
+	SourcePVReclaimDelete       = "Delete"
+	DestinationPVCReclaimRetain = "Retain"
+	DestinationPVCReclaimDelete = "Delete"
+)
 
 type SessionWorkflowOptions struct {
 	SourceNode     string   `json:"sourceNode,omitempty"     yaml:"sourceNode,omitempty"`
@@ -994,11 +1005,12 @@ type BackupRepositoryBindingStatus struct {
 }
 
 type SessionStatus struct {
-	Phase               Phase                `json:"phase"                   yaml:"phase"`
-	ResumeFrom          Phase                `json:"resumeFrom,omitempty"    yaml:"resumeFrom,omitempty"`
-	FailureReason       SessionFailureReason `json:"failureReason,omitempty" yaml:"failureReason,omitempty"`
-	ErrorCategory       ErrorCategory        `json:"errorCategory,omitempty" yaml:"errorCategory,omitempty"`
-	WarmPassesCompleted int                  `json:"warmPassesCompleted"     yaml:"warmPassesCompleted"`
+	ExecutionIntentHash string               `json:"executionIntentHash,omitempty" yaml:"executionIntentHash,omitempty"`
+	Phase               Phase                `json:"phase"                         yaml:"phase"`
+	ResumeFrom          Phase                `json:"resumeFrom,omitempty"          yaml:"resumeFrom,omitempty"`
+	FailureReason       SessionFailureReason `json:"failureReason,omitempty"       yaml:"failureReason,omitempty"`
+	ErrorCategory       ErrorCategory        `json:"errorCategory,omitempty"       yaml:"errorCategory,omitempty"`
+	WarmPassesCompleted int                  `json:"warmPassesCompleted"           yaml:"warmPassesCompleted"`
 	// OriginalPodSnapshotHash records the controller-captured standalone Pod
 	// snapshot used for a later workload resume. It is populated only for
 	// controller-backed PodMigration workflows.
@@ -1484,6 +1496,13 @@ func (s *Session) VolumeStatus(name string) (*VolumeStatus, error) {
 
 func (s *Session) Validate() error {
 	if err := validateSessionHeader(s); err != nil {
+		return err
+	}
+
+	if err := ValidateReclaimPolicies(
+		s.Spec.SourcePVReclaimPolicy,
+		s.Spec.DestinationPVCReclaimPolicy,
+	); err != nil {
 		return err
 	}
 

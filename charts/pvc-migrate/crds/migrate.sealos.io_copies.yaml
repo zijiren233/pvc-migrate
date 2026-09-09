@@ -58,6 +58,13 @@ spec:
                 type: boolean
               destinationCapacity:
                 type: string
+              destinationPVCReclaimPolicy:
+                description: DestinationPVCReclaimPolicy controls workflow-owned destination
+                  storage during cleanup.
+                enum:
+                - Retain
+                - Delete
+                type: string
               destinationPath:
                 type: string
               destinationStorageClass:
@@ -264,6 +271,8 @@ spec:
                 - timeout
                 - internal
                 type: string
+              executionIntentHash:
+                type: string
               failureReason:
                 maxLength: 8192
                 type: string
@@ -340,6 +349,11 @@ spec:
                 properties:
                   deleteExtraneous:
                     type: boolean
+                  destinationPVCReclaimPolicy:
+                    enum:
+                    - Retain
+                    - Delete
+                    type: string
                   online:
                     type: boolean
                   skipSourceUsageCheck:

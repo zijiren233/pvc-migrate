@@ -12,26 +12,27 @@ import (
 // independent from reserveFlags so adding a copy mode cannot silently expose
 // a new reserve parameter.
 type copyFlags struct {
-	sessionID             string
-	sourceNamespace       string
-	temporaryNamespace    string
-	destinationNamespace  string
-	sourcePVCs            []string
-	destinationPVCs       []string
-	destinationCapacities []string
-	sourcePaths           []string
-	destinationPaths      []string
-	allowVolumeShrink     bool
-	skipSourceUsageCheck  bool
-	sourceNode            string
-	targetNode            string
-	destinationClass      string
-	capacityAwareness     string
-	strategies            []string
-	online                bool
-	verifyChecksum        bool
-	deleteExtraneous      bool
-	podName               string
+	sessionID                   string
+	sourceNamespace             string
+	temporaryNamespace          string
+	destinationNamespace        string
+	sourcePVCs                  []string
+	destinationPVCs             []string
+	destinationCapacities       []string
+	sourcePaths                 []string
+	destinationPaths            []string
+	allowVolumeShrink           bool
+	skipSourceUsageCheck        bool
+	sourceNode                  string
+	targetNode                  string
+	destinationClass            string
+	capacityAwareness           string
+	strategies                  []string
+	online                      bool
+	verifyChecksum              bool
+	deleteExtraneous            bool
+	podName                     string
+	destinationPVCReclaimPolicy string
 }
 
 func (f *copyFlags) bind(command *cobra.Command) {
@@ -141,6 +142,12 @@ func (f *copyFlags) bind(command *cobra.Command) {
 		"Delete destination files absent from the source",
 	)
 	flags.StringVar(&f.podName, "pod", "", "Pod whose PVCs define the copy set")
+	flags.StringVar(
+		&f.destinationPVCReclaimPolicy,
+		"destination-pvc-reclaim-policy",
+		string(domain.DestinationPVCReclaimRetain),
+		"Policy for the destination PVC during cleanup: Retain or Delete",
+	)
 }
 
 func (f *copyFlags) planOptions(state *rootState, useTemporary bool) (planner.CopyOptions, error) {
@@ -169,28 +176,29 @@ func (f *copyFlags) planOptions(state *rootState, useTemporary bool) (planner.Co
 	}
 
 	return planner.CopyOptions{
-		SessionID:             id,
-		SourceNamespace:       f.sourceNamespace,
-		TemporaryNamespace:    temporaryNamespace,
-		DestinationNamespace:  destinationNamespace,
-		SessionNamespace:      state.global.sessionNamespace,
-		StagingNamespace:      stagingNamespace,
-		ToolImage:             state.global.toolImage,
-		SourcePVCs:            append([]string(nil), f.sourcePVCs...),
-		DestinationPVCs:       append([]string(nil), f.destinationPVCs...),
-		DestinationCapacities: append([]string(nil), f.destinationCapacities...),
-		SourcePaths:           append([]string(nil), f.sourcePaths...),
-		DestinationPaths:      append([]string(nil), f.destinationPaths...),
-		AllowVolumeShrink:     f.allowVolumeShrink,
-		SkipSourceUsageCheck:  f.skipSourceUsageCheck,
-		PodName:               f.podName,
-		SourceNode:            f.sourceNode,
-		TargetNode:            f.targetNode,
-		DestinationClass:      f.destinationClass,
-		CapacityAwareness:     domain.CapacityAwareness(f.capacityAwareness),
-		Strategies:            append([]string(nil), f.strategies...),
-		Online:                f.online,
-		VerifyChecksum:        f.verifyChecksum,
-		DeleteExtraneous:      f.deleteExtraneous,
+		SessionID:                   id,
+		SourceNamespace:             f.sourceNamespace,
+		TemporaryNamespace:          temporaryNamespace,
+		DestinationNamespace:        destinationNamespace,
+		SessionNamespace:            state.global.sessionNamespace,
+		StagingNamespace:            stagingNamespace,
+		ToolImage:                   state.global.toolImage,
+		SourcePVCs:                  append([]string(nil), f.sourcePVCs...),
+		DestinationPVCs:             append([]string(nil), f.destinationPVCs...),
+		DestinationCapacities:       append([]string(nil), f.destinationCapacities...),
+		SourcePaths:                 append([]string(nil), f.sourcePaths...),
+		DestinationPaths:            append([]string(nil), f.destinationPaths...),
+		AllowVolumeShrink:           f.allowVolumeShrink,
+		SkipSourceUsageCheck:        f.skipSourceUsageCheck,
+		PodName:                     f.podName,
+		SourceNode:                  f.sourceNode,
+		TargetNode:                  f.targetNode,
+		DestinationClass:            f.destinationClass,
+		CapacityAwareness:           domain.CapacityAwareness(f.capacityAwareness),
+		Strategies:                  append([]string(nil), f.strategies...),
+		Online:                      f.online,
+		VerifyChecksum:              f.verifyChecksum,
+		DeleteExtraneous:            f.deleteExtraneous,
+		DestinationPVCReclaimPolicy: f.destinationPVCReclaimPolicy,
 	}, nil
 }

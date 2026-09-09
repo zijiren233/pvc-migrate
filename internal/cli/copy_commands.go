@@ -34,6 +34,25 @@ func adoptReservedSessionForCopy(
 	session *domain.Session,
 	flags *copyFlags,
 ) error {
+	if cmd.Flags().Changed("destination-pvc-reclaim-policy") {
+		if err := domain.ValidateReclaimPolicies(
+			"",
+			flags.destinationPVCReclaimPolicy,
+		); err != nil {
+			return err
+		}
+
+		if session.Spec.Type != domain.SessionTypeReserve {
+			return domain.NewError(
+				domain.ErrorPrecondition,
+				"copy",
+				"change an existing copy's reclaim policy through cleanup flags or workflow spec",
+			)
+		}
+
+		session.Spec.DestinationPVCReclaimPolicy = flags.destinationPVCReclaimPolicy
+	}
+
 	if session.Spec.Type == domain.SessionTypeReserve {
 		options := session.Spec.WorkflowOptions()
 		if cmd.Flags().Changed("source-node") {

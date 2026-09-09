@@ -17,6 +17,7 @@ import (
 // workflowInput is an internal projection of operation-specific request fields.
 // Admission defines which fields are available on each public CR kind.
 type workflowInput struct {
+	SourcePVReclaimPolicy    string `json:"sourcePVReclaimPolicy,omitempty"`
 	v1alpha1.TransferOptions `json:",inline"`
 	Volumes                  []v1alpha1.VolumeRequest         `json:"volumes"`
 	Pod                      *v1alpha1.LocalResourceReference `json:"pod"`
@@ -333,29 +334,31 @@ func (p *Planner) planTransferWorkflow(
 	operation := spec.Operation()
 
 	options := planOptions{
-		Operation:              operation,
-		SessionID:              session.ID,
-		SourceNamespace:        spec.SourceNamespace,
-		TemporaryNamespace:     spec.TemporaryNamespace,
-		DestinationNamespace:   spec.DestinationNamespace,
-		SessionNamespace:       spec.SessionNamespace,
-		StagingNamespace:       spec.TemporaryNamespace,
-		ToolImage:              image,
-		DestinationClass:       input.DestinationStorageClass,
-		SourceNode:             input.SourceNode,
-		TargetNode:             input.TargetNode,
-		CapacityAwareness:      domain.CapacityAwareness(input.CapacityAwareness),
-		Strategies:             input.Strategies,
-		VerifyChecksum:         input.VerifyChecksum,
-		DeleteExtraneous:       input.DeleteExtraneous,
-		AllowVolumeShrink:      input.AllowVolumeShrink,
-		SkipSourceUsageCheck:   input.SkipSourceUsageCheck,
-		Online:                 input.Online,
-		PrecopyPasses:          input.PrecopyPasses,
-		SwitchoverCandidate:    input.SwitchoverCandidate,
-		AllowLeaderDowntime:    input.AllowLeaderDowntime,
-		ForceReprovision:       input.ForceReprovision,
-		OpenEBSLVMEnableShared: input.OpenEBSLVMEnableShared,
+		Operation:                   operation,
+		SessionID:                   session.ID,
+		SourceNamespace:             spec.SourceNamespace,
+		TemporaryNamespace:          spec.TemporaryNamespace,
+		DestinationNamespace:        spec.DestinationNamespace,
+		SessionNamespace:            spec.SessionNamespace,
+		StagingNamespace:            spec.TemporaryNamespace,
+		ToolImage:                   image,
+		DestinationClass:            input.DestinationStorageClass,
+		SourceNode:                  input.SourceNode,
+		TargetNode:                  input.TargetNode,
+		CapacityAwareness:           domain.CapacityAwareness(input.CapacityAwareness),
+		Strategies:                  input.Strategies,
+		VerifyChecksum:              input.VerifyChecksum,
+		DeleteExtraneous:            input.DeleteExtraneous,
+		AllowVolumeShrink:           input.AllowVolumeShrink,
+		SkipSourceUsageCheck:        input.SkipSourceUsageCheck,
+		Online:                      input.Online,
+		PrecopyPasses:               input.PrecopyPasses,
+		SwitchoverCandidate:         input.SwitchoverCandidate,
+		AllowLeaderDowntime:         input.AllowLeaderDowntime,
+		ForceReprovision:            input.ForceReprovision,
+		OpenEBSLVMEnableShared:      input.OpenEBSLVMEnableShared,
+		SourcePVReclaimPolicy:       input.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: input.DestinationPVCReclaimPolicy,
 	}
 	if input.Pod != nil {
 		options.PodName = input.Pod.Name

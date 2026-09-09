@@ -1111,6 +1111,9 @@ func (s *CRDSessionStore) Update(ctx context.Context, session *domain.Session) e
 	}
 
 	session.Status.ObservedGeneration = updated.GetGeneration()
+	if session.Status.ExecutionIntentHash == "" {
+		session.Status.ExecutionIntentHash = domain.ExecutionIntentHash(session.Intent)
+	}
 
 	status := session.Status
 	if !setWorkflowStatus(updated, session.Spec, status, !session.PlanPending) {
@@ -1179,6 +1182,13 @@ func (s *CRDSessionStore) rebindWorkflowResource(
 		append([]metav1.OwnerReference(nil), previous.GetOwnerReferences()...),
 	)
 
+	decodedTarget, err := DecodeWorkflow(target)
+	if err != nil {
+		return err
+	}
+
+	session.Intent = decodedTarget.Intent
+
 	if err := s.client.Create(ctx, target); err != nil {
 		return domain.WrapError(
 			domain.ErrorKubernetes,
@@ -1189,6 +1199,7 @@ func (s *CRDSessionStore) rebindWorkflowResource(
 	}
 
 	session.Status.ObservedGeneration = target.GetGeneration()
+	session.Status.ExecutionIntentHash = domain.ExecutionIntentHash(session.Intent)
 
 	status := session.Status
 	if !setWorkflowStatus(target, session.Spec, status, !session.PlanPending) {
@@ -1706,6 +1717,17 @@ func DecodeWorkflow(object crclient.Object) (*domain.Session, error) {
 	}
 
 	session.Intent = envelope.Spec
+
+	var policies struct {
+		Source      string `json:"sourcePVReclaimPolicy"`
+		Destination string `json:"destinationPVCReclaimPolicy"`
+	}
+	if err := json.Unmarshal(envelope.Spec, &policies); err != nil {
+		return nil, err
+	}
+
+	session.Spec.SourcePVReclaimPolicy = policies.Source
+	session.Spec.DestinationPVCReclaimPolicy = policies.Destination
 
 	session.PlanPending = len(envelope.Status.Plan) == 0 || string(envelope.Status.Plan) == "null"
 	if status.Phase != "" {

@@ -169,7 +169,7 @@ func TestGetCopySessionReturnsCopyWithoutFallback(t *testing.T) {
 }
 
 func TestAdoptReservedSessionPreservesOmittedCopySettings(t *testing.T) {
-	for _, args := range [][]string{nil, {"--delete-extraneous=false"}, {"--delete-extraneous=true", "--verify-checksum=false"}} {
+	for _, args := range [][]string{nil, {"--delete-extraneous=false"}, {"--delete-extraneous=true", "--verify-checksum=false"}, {"--destination-pvc-reclaim-policy=Retain"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			options := domain.SessionWorkflowOptions{
 				SourceNode:       "source-a",
@@ -181,7 +181,10 @@ func TestAdoptReservedSessionPreservesOmittedCopySettings(t *testing.T) {
 				"reserved",
 				domain.NewSessionSpec(
 					domain.OperationReserve,
-					domain.SessionCommon{SessionNamespace: "tenant"},
+					domain.SessionCommon{
+						SessionNamespace:            "tenant",
+						DestinationPVCReclaimPolicy: "Delete",
+					},
 					false,
 					options,
 				),
@@ -197,6 +200,15 @@ func TestAdoptReservedSessionPreservesOmittedCopySettings(t *testing.T) {
 
 			if err := adoptReservedSessionForCopy(cmd, session, flags); err != nil {
 				t.Fatal(err)
+			}
+
+			wantPolicy := "Delete"
+			if cmd.Flags().Changed("destination-pvc-reclaim-policy") {
+				wantPolicy = flags.destinationPVCReclaimPolicy
+			}
+
+			if session.Spec.DestinationPVCReclaimPolicy != wantPolicy {
+				t.Fatalf("policy=%s want=%s", session.Spec.DestinationPVCReclaimPolicy, wantPolicy)
 			}
 
 			want := options

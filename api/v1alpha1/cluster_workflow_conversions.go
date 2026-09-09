@@ -79,13 +79,20 @@ func clusterVolumesToDomain(
 func clusterCommonSession(
 	source, temporary, destination, sessionNamespace NamespaceName,
 	volumes []ClusterVolumeSpec,
+	sourcePVReclaimPolicy, destinationPVCReclaimPolicy string,
 ) domain.SessionCommon {
 	return domain.SessionCommon{
 		SourceNamespace:      string(source),
 		TemporaryNamespace:   string(temporary),
 		DestinationNamespace: string(destination),
 		SessionNamespace:     string(sessionNamespace),
-		Volumes:              clusterVolumesToDomain(volumes, string(source), string(temporary)),
+		Volumes: clusterVolumesToDomain(
+			volumes,
+			string(source),
+			string(temporary),
+		),
+		SourcePVReclaimPolicy:       sourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: destinationPVCReclaimPolicy,
 	}
 }
 
@@ -144,7 +151,7 @@ func (s ClusterMigrationPlan) Domain() domain.SessionSpec {
 			s.TemporaryNamespace,
 			s.DestinationNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, s.SourcePVReclaimPolicy, s.DestinationPVCReclaimPolicy,
 		),
 		Type:    domain.SessionTypeMigrate,
 		Migrate: &domain.MigrateSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
@@ -158,7 +165,7 @@ func (s ClusterPodMigrationPlan) Domain() domain.SessionSpec {
 			s.TemporaryNamespace,
 			s.SourceNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, s.SourcePVReclaimPolicy, s.DestinationPVCReclaimPolicy,
 		),
 		Type: domain.SessionTypeMigratePod,
 		MigratePod: &domain.MigratePodSessionSpec{
@@ -180,7 +187,7 @@ func (s ClusterReservationPlan) Domain() domain.SessionSpec {
 			s.DestinationNamespace,
 			s.DestinationNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, "", s.DestinationPVCReclaimPolicy,
 		),
 		Type:    domain.SessionTypeReserve,
 		Reserve: &domain.ReserveSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
@@ -194,7 +201,7 @@ func (s ClusterCopyPlan) Domain() domain.SessionSpec {
 			s.DestinationNamespace,
 			s.DestinationNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, "", s.DestinationPVCReclaimPolicy,
 		),
 		Type: domain.SessionTypeCopy,
 		Copy: &domain.CopySessionSpec{
@@ -221,18 +228,20 @@ func ClusterMigrationPlanFromDomain(s domain.SessionSpec) ClusterMigrationPlan {
 	options := s.WorkflowOptions()
 
 	return ClusterMigrationPlan{
-		SourceNamespace:      NamespaceName(s.SourceNamespace),
-		TemporaryNamespace:   NamespaceName(s.TemporaryNamespace),
-		DestinationNamespace: NamespaceName(s.DestinationNamespace),
-		SessionNamespace:     NamespaceName(s.SessionNamespace),
-		Volumes:              clusterVolumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
+		SourcePVReclaimPolicy:       s.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		TemporaryNamespace:          NamespaceName(s.TemporaryNamespace),
+		DestinationNamespace:        NamespaceName(s.DestinationNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
 	}
 }
 
@@ -240,20 +249,22 @@ func ClusterPodMigrationPlanFromDomain(s domain.SessionSpec) ClusterPodMigration
 	options := s.WorkflowOptions()
 
 	return ClusterPodMigrationPlan{
-		SourceNamespace:        NamespaceName(s.SourceNamespace),
-		TemporaryNamespace:     NamespaceName(s.TemporaryNamespace),
-		SessionNamespace:       NamespaceName(s.SessionNamespace),
-		Volumes:                clusterVolumesFromDomain(s.Volumes),
-		SourceNode:             options.SourceNode,
-		TargetNode:             options.TargetNode,
-		ToolImage:              options.ToolImage,
-		Strategies:             append([]string(nil), options.Strategies...),
-		VerifyChecksum:         options.VerifyChecksum,
-		DeleteExtraneous:       options.DeleteExtraneous,
-		SkipSourceUsageCheck:   options.SkipSourceUsageCheck,
-		Workload:               ClusterWorkloadSpec(workloadFromDomain(s.Workload())),
-		PrecopyPasses:          s.PrecopyPasses(),
-		OpenEBSLVMEnableShared: s.OpenEBSLVMSharedMountEnabled(),
+		SourcePVReclaimPolicy:       s.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		TemporaryNamespace:          NamespaceName(s.TemporaryNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
+		Workload:                    ClusterWorkloadSpec(workloadFromDomain(s.Workload())),
+		PrecopyPasses:               s.PrecopyPasses(),
+		OpenEBSLVMEnableShared:      s.OpenEBSLVMSharedMountEnabled(),
 	}
 }
 
@@ -261,17 +272,18 @@ func ClusterReservationPlanFromDomain(s domain.SessionSpec) ClusterReservationPl
 	options := s.WorkflowOptions()
 
 	return ClusterReservationPlan{
-		SourceNamespace:      NamespaceName(s.SourceNamespace),
-		DestinationNamespace: NamespaceName(s.TemporaryNamespace),
-		SessionNamespace:     NamespaceName(s.SessionNamespace),
-		Volumes:              clusterVolumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		DestinationNamespace:        NamespaceName(s.TemporaryNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
 	}
 }
 
@@ -279,18 +291,19 @@ func ClusterCopyPlanFromDomain(s domain.SessionSpec) ClusterCopyPlan {
 	options := s.WorkflowOptions()
 
 	return ClusterCopyPlan{
-		SourceNamespace:      NamespaceName(s.SourceNamespace),
-		DestinationNamespace: NamespaceName(s.TemporaryNamespace),
-		SessionNamespace:     NamespaceName(s.SessionNamespace),
-		Volumes:              clusterVolumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
-		Online:               s.Online(),
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		DestinationNamespace:        NamespaceName(s.TemporaryNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
+		Online:                      s.Online(),
 	}
 }
 

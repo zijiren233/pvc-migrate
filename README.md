@@ -215,12 +215,20 @@ for structured reconciliation and data-plane events. Raw tool Pod streams and
 command-oriented `Next steps` guidance remain CLI-only.
 
 Deleting a workflow CR requests cancellation and finalization. Before storage
-activation, the controller stops transfer tools, restores paused workloads and
-removes staging resources. Once activation has started, it finishes the storage
-switch before cleanup; an in-progress rollback is completed instead. Successful
-Copy output and the current active migration volume are retained. Deleting a
-migration CR closes its rollback window and removes the inactive rollback volume.
-Use the explicit rollback command before deletion to keep the original volume.
+activation, the controller stops transfer tools and restores paused workloads.
+Once activation has started, it finishes the storage switch before cleanup;
+an in-progress rollback is completed instead. Cleanup then applies
+`sourcePVReclaimPolicy` and `destinationPVCReclaimPolicy`, both defaulting to
+`Retain`. The source policy can delete only the inactive original PV after a
+completed migration. After rollback the original PV is active and protected;
+the destination policy controls the remaining destination storage. Copy and
+Reservation expose only the destination policy. Deleting a CR closes its
+rollback window, even when both volumes are retained.
+
+Policies can be edited in `spec`, including while deletion is blocked. Retaining
+a PVC permits deleting the CR while consumers keep using it. Deleting destination
+storage requires consumers to release it first; changing its policy to `Retain`
+lets finalization continue without deleting the data.
 
 The protection finalizer remains until recovery and cleanup succeed, including
 Lease removal. Inspect the `Deleting` and `DeletionBlocked` conditions, Events and
@@ -344,10 +352,17 @@ Close the rollback window after validating the application:
 pvc-migrate --kubeconfig /path/to/kubeconfig \
   --session-namespace pvc-migrate-system \
   --yes migrate-pod cleanup database-20260809 --dry-run=false \
-  --delete-rollback-pv --finalize --delete-session
+  --source-pv-reclaim-policy Delete --destination-pvc-reclaim-policy Retain \
+  --finalize --delete-session
 ```
 
-`--delete-rollback-pv` restores the rollback PV's recorded reclaim policy before deleting the PV. A recorded `Delete` policy lets Kubernetes and the CSI driver delete the backend volume. A recorded `Retain` policy preserves the backend volume.
+`--source-pv-reclaim-policy Delete` reclaims only the inactive source PV after a completed migration. It restores the PV's recorded Kubernetes reclaim policy before deletion: `Delete` lets the CSI driver remove backend storage; `Retain` preserves backend storage. After rollback, the source is active and protected. To reclaim the remaining destination storage, use `--destination-pvc-reclaim-policy Delete`.
+
+Migration and PodMigration expose `spec.sourcePVReclaimPolicy` and `spec.destinationPVCReclaimPolicy`; both default to `Retain`. Copy and Reservation (including Cluster variants) expose only the destination policy and always preserve the source. Policies may be changed after execution; transfer inputs remain frozen. CLI creation and cleanup use the equivalent `--source-pv-reclaim-policy` and `--destination-pvc-reclaim-policy` flags. Cleanup overrides apply to that invocation; omitted flags use the recorded policies. Deleting a CR applies its current policies through the same cleanup implementation. A destination still referenced by a consumer blocks `Delete`; switch its policy to `Retain` to release the CR while preserving storage. No legacy deletion flags or field aliases are supported.
+
+Cleanup guidance includes explicit values for every applicable reclaim policy, including retry commands. After rollback or abort, migration guidance overrides a recorded source `Delete` with `Retain` and explains why the source is protected. Destination retention follows the current record or the explicit cleanup override; capacity-recovery instructions separately recommend discarding the undersized destination. Guidance does not modify the stored policies.
+
+A successful cleanup dry-run prints the policies validated for that invocation and an execution command preserving its overrides and finalization options. Structured output continues to show the stored session. Cleanup validation errors preserve those options in the retry command as well.
 
 If a PVC or PV still has session ownership after its session ConfigMap was lost, validate the reconstructed resource relationship and then clear it:
 

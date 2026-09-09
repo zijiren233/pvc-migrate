@@ -196,17 +196,14 @@ func (r *rootState) newReserveCleanupCommand() *cobra.Command {
 					session,
 					options,
 				); err != nil {
-					return reportSessionError(cmd, session, err)
+					return reportCleanupError(cmd, session, options, err)
 				}
 
-				return printSessionResult(cmd, runtime, session)
+				return printCleanupResult(cmd, runtime, session, options, true)
 			}
 
-			if options.DeleteTemporary || options.DeleteRollback || options.Finalize ||
-				options.DeleteSession {
-				if err := r.confirm(ctx, cmd, args[0]); err != nil {
-					return reportApprovalError(cmd, err)
-				}
+			if err := r.confirm(ctx, cmd, args[0]); err != nil {
+				return reportApprovalError(cmd, err)
 			}
 
 			if err := runtime.service.CleanupReserve(ctx, session, options); err != nil {
@@ -217,10 +214,10 @@ func (r *rootState) newReserveCleanupCommand() *cobra.Command {
 				return printDeletedSession(cmd, session)
 			}
 
-			return printSessionResult(cmd, runtime, session)
+			return printCleanupResult(cmd, runtime, session, options, false)
 		},
 	}
-	bindCleanupFlags(command, &options)
+	bindDestinationCleanupFlags(command, &options)
 	bindDryRun(command, &dryRun)
 
 	return command

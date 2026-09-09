@@ -14,6 +14,22 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func TestCompletedMigrationDeletionRetainsActiveDestinationPVC(t *testing.T) {
+	session := appTestSession()
+	session.Status.Phase = domain.PhaseCompleted
+
+	volumes, err := reclaimVolumes(session, CleanupOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, volume := range volumes {
+		if volume.delete {
+			t.Fatal("default cleanup must retain both volumes")
+		}
+	}
+}
+
 func TestCleanupFinalizesActivePVAndClosesRollbackWindow(t *testing.T) {
 	ctx := context.Background()
 	session := appTestSession()
@@ -63,7 +79,7 @@ func TestCleanupFinalizesActivePVAndClosesRollbackWindow(t *testing.T) {
 	if err := service.cleanupWorkflowForTest(
 		ctx,
 		session,
-		CleanupOptions{DeleteRollback: true, Finalize: true, DeleteSession: true},
+		CleanupOptions{SourcePVReclaimPolicy: "Delete", Finalize: true, DeleteSession: true},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +425,7 @@ func TestCleanupAbortedSessionReleasesSourceAndDeletesDestination(t *testing.T) 
 	if err := service.cleanupWorkflowForTest(
 		ctx,
 		session,
-		CleanupOptions{DeleteRollback: true, Finalize: true, DeleteSession: true},
+		CleanupOptions{DestinationPVCReclaimPolicy: "Delete", Finalize: true, DeleteSession: true},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +624,7 @@ func TestCleanupAbortedSessionSkipsReplacedSourceResources(t *testing.T) {
 	if err := service.cleanupWorkflowForTest(
 		ctx,
 		session,
-		CleanupOptions{DeleteRollback: true, Finalize: true, DeleteSession: true},
+		CleanupOptions{DestinationPVCReclaimPolicy: "Delete", Finalize: true, DeleteSession: true},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -929,10 +945,10 @@ func TestCleanupSingleStageSessionsRemovesDestinationAndFinalizesSource(t *testi
 			store := &memoryStore{}
 			service := &Service{client: client, store: store}
 			options := CleanupOptions{
-				DeleteTemporary: true,
-				DeleteRollback:  true,
-				Finalize:        true,
-				DeleteSession:   true,
+				DestinationPVCReclaimPolicy: "Delete",
+
+				Finalize:      true,
+				DeleteSession: true,
 			}
 
 			if err := service.validateCleanupWorkflowForTest(ctx, session, options); err != nil {

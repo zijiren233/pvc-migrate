@@ -166,6 +166,10 @@ type GrafanaSpec struct {
 // +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="volumes must contain at least one source PVC"
 // MigrationPlan is an offline PVC migration. It has no workload controls.
 type MigrationPlan struct {
+	// +kubebuilder:validation:Enum=Retain;Delete
+	SourcePVReclaimPolicy string `json:"sourcePVReclaimPolicy,omitempty" yaml:"sourcePVReclaimPolicy,omitempty"`
+	// +kubebuilder:validation:Enum=Retain;Delete
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
 	// +kubebuilder:validation:MaxItems=1024
 	Volumes    []VolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
 	SourceNode string       `json:"sourceNode,omitempty" yaml:"sourceNode,omitempty"`
@@ -183,6 +187,10 @@ type MigrationPlan struct {
 // PodMigrationPlan is a workload-aware migration. Workload and precopy
 // controls are exclusive to this operation.
 type PodMigrationPlan struct {
+	// +kubebuilder:validation:Enum=Retain;Delete
+	SourcePVReclaimPolicy string `json:"sourcePVReclaimPolicy,omitempty" yaml:"sourcePVReclaimPolicy,omitempty"`
+	// +kubebuilder:validation:Enum=Retain;Delete
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
 	// +kubebuilder:validation:MaxItems=1024
 	Volumes    []VolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
 	SourceNode string       `json:"sourceNode,omitempty" yaml:"sourceNode,omitempty"`
@@ -200,6 +208,8 @@ type PodMigrationPlan struct {
 
 // +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="volumes must contain at least one source PVC"
 type ReservationPlan struct {
+	// +kubebuilder:validation:Enum=Retain;Delete
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
 	// +kubebuilder:validation:MaxItems=1024
 	Volumes    []VolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
 	SourceNode string       `json:"sourceNode,omitempty" yaml:"sourceNode,omitempty"`
@@ -214,6 +224,8 @@ type ReservationPlan struct {
 
 // +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="volumes must contain at least one source PVC"
 type CopyPlan struct {
+	// +kubebuilder:validation:Enum=Retain;Delete
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
 	// +kubebuilder:validation:MaxItems=1024
 	Volumes    []VolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
 	SourceNode string       `json:"sourceNode,omitempty" yaml:"sourceNode,omitempty"`
@@ -308,6 +320,7 @@ type WorkflowHistoryEntry struct {
 }
 
 type WorkflowStatus struct {
+	ExecutionIntentHash string `json:"executionIntentHash,omitempty" yaml:"executionIntentHash,omitempty"`
 	// +kubebuilder:validation:Enum=validation;precondition;conflict;kubernetes;copy;timeout;internal
 	ErrorCategory string        `json:"errorCategory,omitempty" yaml:"errorCategory,omitempty"`
 	Phase         WorkflowPhase `json:"phase"                   yaml:"phase"`
@@ -646,28 +659,41 @@ func volumesToDomain(
 func namespacedSessionCommon(
 	namespace string,
 	volumes []VolumeSpec,
+	sourcePVReclaimPolicy, destinationPVCReclaimPolicy string,
 ) domain.SessionCommon {
 	return domain.SessionCommon{
-		SourceNamespace:      namespace,
-		TemporaryNamespace:   namespace,
-		DestinationNamespace: namespace,
-		SessionNamespace:     namespace,
-		Volumes:              volumesToDomain(volumes, namespace, namespace),
+		SourceNamespace:             namespace,
+		TemporaryNamespace:          namespace,
+		DestinationNamespace:        namespace,
+		SessionNamespace:            namespace,
+		Volumes:                     volumesToDomain(volumes, namespace, namespace),
+		SourcePVReclaimPolicy:       sourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: destinationPVCReclaimPolicy,
 	}
 }
 
 func (s MigrationPlan) Domain(namespace string) domain.SessionSpec {
 	return domain.SessionSpec{
-		SessionCommon: namespacedSessionCommon(namespace, s.Volumes),
-		Type:          domain.SessionTypeMigrate,
-		Migrate:       &domain.MigrateSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
+		SessionCommon: namespacedSessionCommon(
+			namespace,
+			s.Volumes,
+			s.SourcePVReclaimPolicy,
+			s.DestinationPVCReclaimPolicy,
+		),
+		Type:    domain.SessionTypeMigrate,
+		Migrate: &domain.MigrateSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
 	}
 }
 
 func (s PodMigrationPlan) Domain(namespace string) domain.SessionSpec {
 	return domain.SessionSpec{
-		SessionCommon: namespacedSessionCommon(namespace, s.Volumes),
-		Type:          domain.SessionTypeMigratePod,
+		SessionCommon: namespacedSessionCommon(
+			namespace,
+			s.Volumes,
+			s.SourcePVReclaimPolicy,
+			s.DestinationPVCReclaimPolicy,
+		),
+		Type: domain.SessionTypeMigratePod,
 		MigratePod: &domain.MigratePodSessionSpec{
 			SessionWorkflowOptions: s.workflowOptions(),
 			Workload:               workloadToDomain(s.Workload, namespace),
@@ -679,16 +705,26 @@ func (s PodMigrationPlan) Domain(namespace string) domain.SessionSpec {
 
 func (s ReservationPlan) Domain(namespace string) domain.SessionSpec {
 	return domain.SessionSpec{
-		SessionCommon: namespacedSessionCommon(namespace, s.Volumes),
-		Type:          domain.SessionTypeReserve,
-		Reserve:       &domain.ReserveSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
+		SessionCommon: namespacedSessionCommon(
+			namespace,
+			s.Volumes,
+			"",
+			s.DestinationPVCReclaimPolicy,
+		),
+		Type:    domain.SessionTypeReserve,
+		Reserve: &domain.ReserveSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
 	}
 }
 
 func (s CopyPlan) Domain(namespace string) domain.SessionSpec {
 	return domain.SessionSpec{
-		SessionCommon: namespacedSessionCommon(namespace, s.Volumes),
-		Type:          domain.SessionTypeCopy,
+		SessionCommon: namespacedSessionCommon(
+			namespace,
+			s.Volumes,
+			"",
+			s.DestinationPVCReclaimPolicy,
+		),
+		Type: domain.SessionTypeCopy,
 		Copy: &domain.CopySessionSpec{
 			SessionWorkflowOptions: s.workflowOptions(),
 			Online:                 s.Online,
@@ -799,14 +835,16 @@ func MigrationPlanFromDomain(s domain.SessionSpec) MigrationPlan {
 	options := s.WorkflowOptions()
 
 	return MigrationPlan{
-		Volumes:              volumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
+		SourcePVReclaimPolicy:       s.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		Volumes:                     volumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
 	}
 }
 
@@ -814,17 +852,19 @@ func PodMigrationPlanFromDomain(s domain.SessionSpec) PodMigrationPlan {
 	options := s.WorkflowOptions()
 
 	return PodMigrationPlan{
-		Volumes:                volumesFromDomain(s.Volumes),
-		SourceNode:             options.SourceNode,
-		TargetNode:             options.TargetNode,
-		ToolImage:              options.ToolImage,
-		Strategies:             append([]string(nil), options.Strategies...),
-		VerifyChecksum:         options.VerifyChecksum,
-		DeleteExtraneous:       options.DeleteExtraneous,
-		SkipSourceUsageCheck:   options.SkipSourceUsageCheck,
-		Workload:               workloadFromDomain(s.Workload()),
-		PrecopyPasses:          s.PrecopyPasses(),
-		OpenEBSLVMEnableShared: s.OpenEBSLVMSharedMountEnabled(),
+		SourcePVReclaimPolicy:       s.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		Volumes:                     volumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
+		Workload:                    workloadFromDomain(s.Workload()),
+		PrecopyPasses:               s.PrecopyPasses(),
+		OpenEBSLVMEnableShared:      s.OpenEBSLVMSharedMountEnabled(),
 	}
 }
 
@@ -832,14 +872,15 @@ func ReservationPlanFromDomain(s domain.SessionSpec) ReservationPlan {
 	options := s.WorkflowOptions()
 
 	return ReservationPlan{
-		Volumes:              volumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		Volumes:                     volumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
 	}
 }
 
@@ -847,15 +888,16 @@ func CopyPlanFromDomain(s domain.SessionSpec) CopyPlan {
 	options := s.WorkflowOptions()
 
 	return CopyPlan{
-		Volumes:              volumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
-		Online:               s.Online(),
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		Volumes:                     volumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
+		Online:                      s.Online(),
 	}
 }
 
@@ -1234,14 +1276,15 @@ func workloadToDomain(w WorkloadSpec, namespace string) domain.WorkloadSpec {
 
 func workflowStatusFromDomain(s domain.SessionStatus) WorkflowStatus {
 	out := WorkflowStatus{
-		Phase:              WorkflowPhase(s.Phase),
-		ResumeFrom:         WorkflowPhase(s.ResumeFrom),
-		FailureReason:      domain.BoundWorkflowMessage(string(s.FailureReason)),
-		ErrorCategory:      string(s.ErrorCategory),
-		ObservedGeneration: s.ObservedGeneration,
-		StartedAt:          s.StartedAt,
-		UpdatedAt:          s.UpdatedAt,
-		Message:            domain.BoundWorkflowMessage(s.Message),
+		Phase:               WorkflowPhase(s.Phase),
+		ResumeFrom:          WorkflowPhase(s.ResumeFrom),
+		FailureReason:       domain.BoundWorkflowMessage(string(s.FailureReason)),
+		ErrorCategory:       string(s.ErrorCategory),
+		ObservedGeneration:  s.ObservedGeneration,
+		ExecutionIntentHash: s.ExecutionIntentHash,
+		StartedAt:           s.StartedAt,
+		UpdatedAt:           s.UpdatedAt,
+		Message:             domain.BoundWorkflowMessage(s.Message),
 	}
 	if s.CompletedAt != nil {
 		out.CompletedAt = s.CompletedAt.DeepCopy()
@@ -1279,14 +1322,15 @@ func workflowStatusFromDomain(s domain.SessionStatus) WorkflowStatus {
 
 func workflowStatusToDomain(s WorkflowStatus) domain.SessionStatus {
 	out := domain.SessionStatus{
-		Phase:              domain.Phase(s.Phase),
-		ResumeFrom:         domain.Phase(s.ResumeFrom),
-		FailureReason:      domain.SessionFailureReason(s.FailureReason),
-		ErrorCategory:      domain.ErrorCategory(s.ErrorCategory),
-		ObservedGeneration: s.ObservedGeneration,
-		StartedAt:          s.StartedAt,
-		UpdatedAt:          s.UpdatedAt,
-		Message:            s.Message,
+		Phase:               domain.Phase(s.Phase),
+		ResumeFrom:          domain.Phase(s.ResumeFrom),
+		FailureReason:       domain.SessionFailureReason(s.FailureReason),
+		ErrorCategory:       domain.ErrorCategory(s.ErrorCategory),
+		ObservedGeneration:  s.ObservedGeneration,
+		ExecutionIntentHash: s.ExecutionIntentHash,
+		StartedAt:           s.StartedAt,
+		UpdatedAt:           s.UpdatedAt,
+		Message:             s.Message,
 	}
 	if s.CompletedAt != nil {
 		out.CompletedAt = s.CompletedAt.DeepCopy()

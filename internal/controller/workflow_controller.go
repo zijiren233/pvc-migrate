@@ -319,9 +319,7 @@ func (r *WorkflowReconciler) reconcile(
 	}
 
 	if terminalSession(session) {
-		// Explicit resume is admitted by workflowResumeStatusChanged. Failed
-		// workflows need no polling while waiting for that status update.
-		return reconcile.Result{}, nil
+		return r.reconcileTerminal(ctx, session)
 	}
 
 	if boundaryErr := kube.ControllerNamespaceBoundaryError(session); boundaryErr != nil {
@@ -357,6 +355,17 @@ func (r *WorkflowReconciler) reconcile(
 	}
 
 	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+}
+
+func (r *WorkflowReconciler) reconcileTerminal(
+	ctx context.Context,
+	session *domain.Session,
+) (reconcile.Result, error) {
+	// Policy edits are observed without scheduling business execution again.
+	if session.Generation != session.Status.ObservedGeneration {
+		return reconcile.Result{}, r.store.Update(ctx, session)
+	}
+	return reconcile.Result{}, nil
 }
 
 func (r *WorkflowReconciler) reconcileInitialCheckpoint(
@@ -893,6 +902,13 @@ var (
 )
 
 func workflowSpecMutationError(session *domain.Session) error {
+	if session != nil && session.Status.ExecutionIntentHash != "" {
+		if session.Status.ExecutionIntentHash == domain.ExecutionIntentHash(session.Intent) {
+			return nil
+		}
+		return changedWorkflowSpecError()
+	}
+
 	if session == nil || session.Status.ObservedGeneration == 0 ||
 		session.Generation == session.Status.ObservedGeneration {
 		return nil
@@ -914,6 +930,10 @@ func workflowSpecMutationError(session *domain.Session) error {
 		}
 	}
 
+	return changedWorkflowSpecError()
+}
+
+func changedWorkflowSpecError() error {
 	return domain.NewError(
 		domain.ErrorConflict,
 		"controller reconcile",

@@ -26,35 +26,37 @@ import (
 )
 
 type planOptions struct {
-	SessionID              string
-	Operation              domain.Operation
-	SourceNamespace        string
-	TemporaryNamespace     string
-	DestinationNamespace   string
-	SessionNamespace       string
-	StagingNamespace       string
-	ToolImage              string
-	CapacityAwareness      domain.CapacityAwareness
-	SourcePVCs             []string
-	DestinationPVCs        []string
-	DestinationCapacities  []string
-	SourcePaths            []string
-	DestinationPaths       []string
-	AllowVolumeShrink      bool
-	SkipSourceUsageCheck   bool
-	PodName                string
-	SourceNode             string
-	TargetNode             string
-	DestinationClass       string
-	Strategies             []string
-	Online                 bool
-	VerifyChecksum         bool
-	DeleteExtraneous       bool
-	SwitchoverCandidate    string
-	AllowLeaderDowntime    bool
-	ForceReprovision       bool
-	PrecopyPasses          int
-	OpenEBSLVMEnableShared bool
+	SessionID                   string
+	Operation                   domain.Operation
+	SourceNamespace             string
+	TemporaryNamespace          string
+	DestinationNamespace        string
+	SessionNamespace            string
+	StagingNamespace            string
+	ToolImage                   string
+	CapacityAwareness           domain.CapacityAwareness
+	SourcePVCs                  []string
+	DestinationPVCs             []string
+	DestinationCapacities       []string
+	SourcePaths                 []string
+	DestinationPaths            []string
+	AllowVolumeShrink           bool
+	SkipSourceUsageCheck        bool
+	PodName                     string
+	SourceNode                  string
+	TargetNode                  string
+	DestinationClass            string
+	Strategies                  []string
+	Online                      bool
+	VerifyChecksum              bool
+	DeleteExtraneous            bool
+	SwitchoverCandidate         string
+	AllowLeaderDowntime         bool
+	ForceReprovision            bool
+	PrecopyPasses               int
+	OpenEBSLVMEnableShared      bool
+	SourcePVReclaimPolicy       string
+	DestinationPVCReclaimPolicy string
 }
 
 type Planner struct {
@@ -148,6 +150,13 @@ func (p *Planner) logInfo(message string, args ...any) {
 }
 
 func (p *Planner) plan(ctx context.Context, options planOptions) (*domain.MigrationPlan, error) {
+	if err := domain.ValidateReclaimPolicies(
+		options.SourcePVReclaimPolicy,
+		options.DestinationPVCReclaimPolicy,
+	); err != nil {
+		return nil, err
+	}
+
 	if p.requestOnly {
 		return p.intentPlan(applyDefaults(options))
 	}
@@ -982,11 +991,13 @@ func (p *Planner) finalizePlanSession(state *planState) {
 	state.plan.Strategies = slices.Clone(options.Strategies)
 
 	common := domain.SessionCommon{
-		SourceNamespace:      options.SourceNamespace,
-		TemporaryNamespace:   options.TemporaryNamespace,
-		DestinationNamespace: options.DestinationNamespace,
-		SessionNamespace:     options.SessionNamespace,
-		Volumes:              state.volumeSpecs,
+		SourceNamespace:             options.SourceNamespace,
+		TemporaryNamespace:          options.TemporaryNamespace,
+		DestinationNamespace:        options.DestinationNamespace,
+		SessionNamespace:            options.SessionNamespace,
+		Volumes:                     state.volumeSpecs,
+		SourcePVReclaimPolicy:       options.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: options.DestinationPVCReclaimPolicy,
 	}
 
 	workflow := domain.SessionWorkflowOptions{

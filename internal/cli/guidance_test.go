@@ -154,6 +154,133 @@ func TestSessionStatusKeepsStructuredOutputSeparateFromGuidance(t *testing.T) {
 	}
 }
 
+func TestCleanupDryRunErrorKeepsExplicitPolicyOverrides(t *testing.T) {
+	for _, operation := range []domain.Operation{domain.OperationMigrate, domain.OperationMigratePod, domain.OperationCopy, domain.OperationReserve} {
+		t.Run(string(operation), func(t *testing.T) {
+			client := fake.NewClientset()
+			store := kube.NewConfigMapSessionStore(client)
+
+			session := guidanceSession(domain.PhaseWarmCopying)
+			if operation == domain.OperationMigrate {
+				session.Spec = domain.NewOfflineMigrationSessionSpec(
+					session.Spec.SessionCommon,
+					domain.SessionWorkflowOptions{},
+				)
+			} else if operation != domain.OperationMigratePod {
+				session.Spec = domain.NewSessionSpec(
+					operation,
+					session.Spec.SessionCommon,
+					false,
+					domain.SessionWorkflowOptions{},
+				)
+			}
+
+			session.Spec.DestinationPVCReclaimPolicy = "Retain"
+			if err := store.Create(t.Context(), session); err != nil {
+				t.Fatal(err)
+			}
+
+			client.ClearActions()
+
+			var stderr bytes.Buffer
+
+			command := NewRoot(Options{
+				Out: io.Discard, ErrOut: &stderr,
+				runtimeFactory: func(state *rootState) (*commandRuntime, error) {
+					return &commandRuntime{
+						store: store, printer: printerFor(state),
+						service: app.NewService(client, store, nil, nil, nil, nil, app.Config{}),
+					}, nil
+				},
+			})
+			command.SetArgs(
+				[]string{
+					workflowCommandName(session),
+					"cleanup",
+					session.ID,
+					"--destination-pvc-reclaim-policy",
+					"Delete",
+					"--dry-run",
+				},
+			)
+
+			if err := command.Execute(); err == nil {
+				t.Fatal("active workflow cleanup was accepted")
+			}
+
+			for _, want := range []string{"Revalidate cleanup before retrying:", "--destination-pvc-reclaim-policy Delete"} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Fatalf("stderr=%q missing %q", stderr.String(), want)
+				}
+			}
+
+			for _, action := range client.Actions() {
+				if action.GetVerb() != "get" && action.GetVerb() != "list" {
+					t.Fatalf("dry-run mutated resources: %v", action)
+				}
+			}
+		})
+	}
+}
+
+func TestCleanupPreviewUsesInvocationPoliciesWithoutChangingRecord(t *testing.T) {
+	session := guidanceSession(domain.PhaseRolledBack)
+	session.Spec.SourcePVReclaimPolicy = "Delete"
+	session.Spec.DestinationPVCReclaimPolicy = "Retain"
+
+	var stdout, stderr bytes.Buffer
+
+	command := NewRoot(Options{Out: &stdout, ErrOut: &stderr})
+	runtime := &commandRuntime{
+		printer: output.Printer{Writer: &stdout, Format: output.Format("json")},
+	}
+
+	options := app.CleanupOptions{
+		SourcePVReclaimPolicy:       "Retain",
+		DestinationPVCReclaimPolicy: "Delete",
+	}
+	if err := printCleanupResult(command, runtime, session, options, true); err != nil {
+		t.Fatal(err)
+	}
+
+	text := stderr.String()
+	if !strings.Contains(text, "source=Retain, destination=Delete") ||
+		!strings.Contains(
+			text,
+			"--source-pv-reclaim-policy Retain --destination-pvc-reclaim-policy Delete --dry-run=false",
+		) {
+		t.Fatalf("preview lost overrides: %s", text)
+	}
+
+	for _, forbidden := range []string{"--delete-session", "--finalize", "--destination-pvc-reclaim-policy Retain"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("preview introduced %q: %s", forbidden, text)
+		}
+	}
+
+	var stored domain.Session
+	if err := json.Unmarshal(stdout.Bytes(), &stored); err != nil {
+		t.Fatal(err)
+	}
+
+	if stored.Spec.SourcePVReclaimPolicy != "Delete" ||
+		stored.Spec.DestinationPVCReclaimPolicy != "Retain" ||
+		session.Spec.DestinationPVCReclaimPolicy != "Retain" {
+		t.Fatal("preview mutated the session or its structured output")
+	}
+
+	stderr.Reset()
+
+	if err := printCleanupResult(command, runtime, session, options, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(stderr.String(), "Cleanup completed") ||
+		strings.Contains(stderr.String(), "--dry-run=false") {
+		t.Fatalf("completed cleanup offered stale mutation: %s", stderr.String())
+	}
+}
+
 func TestCompletedBackupGuidanceOmitsRollback(t *testing.T) {
 	spec := domain.NewSessionSpec(
 		domain.OperationBackup,
@@ -182,7 +309,7 @@ func TestCompletedBackupGuidanceOmitsRollback(t *testing.T) {
 
 	text := output.String()
 	if strings.Contains(text, "backup rollback ") ||
-		strings.Contains(text, "--delete-rollback-pv") ||
+		strings.Contains(text, "--delete-source-pv") ||
 		!strings.Contains(text, "Validate cleanup:") ||
 		!strings.Contains(text, "published recovery point") {
 		t.Fatalf("backup guidance=%q", text)
@@ -270,7 +397,7 @@ func TestRestoreGuidanceUsesRestoreLifecycle(t *testing.T) {
 		"migrate status restore-test",
 		"restore rollback restore-test",
 		"--delete-temporary",
-		"--delete-rollback-pv",
+		"--delete-source-pv",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("restore guidance=%q contains %q", text, forbidden)
@@ -595,7 +722,7 @@ func TestSessionGuidanceCoversTerminalActions(t *testing.T) {
 		phase domain.Phase
 		want  []string
 	}{
-		{domain.PhaseCompleted, []string{"ConfigMap pvc-migrate-system/pvc-migrate-session-mig-test", "migrate-pod rollback mig-test --dry-run", "--delete-rollback-pv", "--delete-session"}},
+		{domain.PhaseCompleted, []string{"ConfigMap pvc-migrate-system/pvc-migrate-session-mig-test", "migrate-pod rollback mig-test --dry-run", "--source-pv-reclaim-policy Retain", "--delete-session"}},
 		{domain.PhaseFailed, []string{"migrate-pod resume mig-test --dry-run", "migrate-pod abort mig-test --dry-run"}},
 		{domain.PhaseAborted, []string{"migrate-pod cleanup mig-test", "--finalize"}},
 		{domain.PhaseRolledBack, []string{"migrate-pod cleanup mig-test", "--delete-session"}},
@@ -618,6 +745,172 @@ func TestSessionGuidanceCoversTerminalActions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCleanupGuidanceOverridesSourceDeleteAfterRollback(t *testing.T) {
+	session := guidanceSession(domain.PhaseRolledBack)
+	session.Spec.SourcePVReclaimPolicy = "Delete"
+	session.Spec.DestinationPVCReclaimPolicy = "Delete"
+
+	var output bytes.Buffer
+	if err := writeSessionGuidance(
+		&output,
+		session,
+		guidancePrefixesForSession(session),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	text := output.String()
+	for _, want := range []string{
+		"--source-pv-reclaim-policy Retain",
+		"--destination-pvc-reclaim-policy Delete",
+		"overrides the recorded source policy Delete with Retain",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("guidance=%q missing %q", text, want)
+		}
+	}
+
+	if source, destination := cleanupGuidancePolicies(
+		session,
+	); source != "Retain" ||
+		destination != "Delete" {
+		t.Fatalf("policies=%s/%s", source, destination)
+	}
+}
+
+func TestCleanupGuidancePolicyMatrix(t *testing.T) {
+	for _, phase := range []domain.Phase{domain.PhaseCompleted, domain.PhaseRolledBack, domain.PhaseAborted} {
+		for _, source := range []string{"", "Retain", "Delete"} {
+			for _, destination := range []string{"", "Retain", "Delete"} {
+				t.Run(string(phase)+"/"+source+"/"+destination, func(t *testing.T) {
+					session := guidanceSession(phase)
+					session.Spec.SourcePVReclaimPolicy = source
+					session.Spec.DestinationPVCReclaimPolicy = destination
+
+					wantSource, wantDestination := source, destination
+					if wantSource == "" || phase != domain.PhaseCompleted {
+						wantSource = "Retain"
+					}
+
+					if wantDestination == "" {
+						wantDestination = "Retain"
+					}
+
+					for _, command := range []string{cleanupCommandArgs(session), cleanupCommandArgsForSessionOptions(session, app.CleanupOptions{Finalize: true, DeleteSession: true})} {
+						for _, flag := range []string{"--source-pv-reclaim-policy " + wantSource, "--destination-pvc-reclaim-policy " + wantDestination} {
+							if !strings.Contains(command, flag) {
+								t.Fatalf("command %q missing %q", command, flag)
+							}
+						}
+					}
+
+					if session.Spec.SourcePVReclaimPolicy != source ||
+						session.Spec.DestinationPVCReclaimPolicy != destination {
+						t.Fatal("guidance changed recorded policies")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestCleanupRetryPreservesDestinationOverrideAndProtectsRollbackSource(t *testing.T) {
+	session := guidanceSession(domain.PhaseRolledBack)
+	session.Spec.SourcePVReclaimPolicy = "Delete"
+	session.Spec.DestinationPVCReclaimPolicy = "Delete"
+
+	command := cleanupCommandArgsForSessionOptions(session, app.CleanupOptions{
+		SourcePVReclaimPolicy: "Delete", DestinationPVCReclaimPolicy: "Retain", Finalize: true,
+	})
+	if !strings.Contains(
+		command,
+		"--source-pv-reclaim-policy Retain --destination-pvc-reclaim-policy Retain --finalize",
+	) ||
+		strings.Contains(command, "--delete-session") {
+		t.Fatalf("retry command=%q", command)
+	}
+}
+
+func TestCleanupGuidanceOnlyIncludesApplicablePolicyFlags(t *testing.T) {
+	for _, operation := range []domain.Operation{domain.OperationCopy, domain.OperationReserve, domain.OperationRename, domain.OperationMove} {
+		t.Run(string(operation), func(t *testing.T) {
+			session := guidanceSession(domain.PhaseCompleted)
+			session.Spec = domain.NewSessionSpec(
+				operation,
+				session.Spec.SessionCommon,
+				false,
+				domain.SessionWorkflowOptions{},
+			)
+
+			session.Spec.DestinationPVCReclaimPolicy = "Delete"
+			for _, command := range []string{cleanupCommandArgs(session), cleanupCommandArgsForSessionOptions(session, app.CleanupOptions{})} {
+				if strings.Contains(command, "--source-pv-reclaim-policy") {
+					t.Fatalf("unsupported source flag: %s", command)
+				}
+
+				if strings.Contains(
+					command,
+					"--destination-pvc-reclaim-policy Delete",
+				) == operation.RebindsPVC() {
+					t.Fatalf("incorrect destination flag: %s", command)
+				}
+			}
+		})
+	}
+}
+
+func TestCleanupRetryKeepsRecordedRetentionDuringCapacityRecovery(t *testing.T) {
+	session := guidanceSession(domain.PhaseAborted)
+	session.Spec.SourcePVReclaimPolicy = "Delete"
+	session.Spec.DestinationPVCReclaimPolicy = "Retain"
+
+	session.Status.FailureReason = domain.FailureDestinationCapacityExhausted
+	if command := cleanupCommandArgs(
+		session,
+	); !strings.Contains(
+		command,
+		"--destination-pvc-reclaim-policy Delete",
+	) {
+		t.Fatalf("capacity recommendation=%s", command)
+	}
+
+	if command := cleanupCommandArgsForSessionOptions(
+		session,
+		app.CleanupOptions{},
+	); !strings.Contains(
+		command,
+		"--destination-pvc-reclaim-policy Retain",
+	) {
+		t.Fatalf("retry silently changed retention=%s", command)
+	}
+}
+
+func TestCleanupRetryExplainsProtectedSourceOverride(t *testing.T) {
+	session := guidanceSession(domain.PhaseRolledBack)
+	session.Spec.SourcePVReclaimPolicy = "Delete"
+	command := &guidanceErrorCommand{}
+
+	wantErr := domain.NewError(domain.ErrorPrecondition, "cleanup", "source PV is still active")
+	if got := reportCleanupError(
+		command,
+		session,
+		app.CleanupOptions{SourcePVReclaimPolicy: "Delete"},
+		wantErr,
+	); !errors.Is(
+		got,
+		wantErr,
+	) {
+		t.Fatalf("original error lost: %v", got)
+	}
+
+	text := command.stderr.String()
+	for _, want := range []string{"retry command uses source Retain", "--source-pv-reclaim-policy Retain --destination-pvc-reclaim-policy Retain"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("retry=%q missing %q", text, want)
+		}
 	}
 }
 
@@ -667,7 +960,7 @@ func TestDestinationCapacityFailureGuidanceRequiresNewSession(t *testing.T) {
 	for _, want := range []string{
 		"cannot resume because its destination capacity is immutable",
 		"migrate-pod abort mig-test --dry-run",
-		"migrate-pod cleanup mig-test --delete-temporary --delete-rollback-pv --finalize --delete-session --dry-run",
+		"migrate-pod cleanup mig-test --source-pv-reclaim-policy Retain --destination-pvc-reclaim-policy Delete --finalize --delete-session --dry-run",
 		"new --session and a larger --destination-capacity",
 	} {
 		if !strings.Contains(text, want) {
@@ -836,6 +1129,18 @@ func TestSessionGuidanceUsesOperationSpecificCompletionPaths(t *testing.T) {
 		}
 	}
 
+	for line := range strings.SplitSeq(copyOutput.String(), "\n") {
+		if strings.Contains(line, "Discard the copied PVC") &&
+			!strings.Contains(line, "--destination-pvc-reclaim-policy Delete") {
+			t.Fatalf("discard command does not delete: %s", line)
+		}
+
+		if strings.Contains(line, "Keep the copied PVC") &&
+			!strings.Contains(line, "--destination-pvc-reclaim-policy Retain") {
+			t.Fatalf("keep command does not retain: %s", line)
+		}
+	}
+
 	failed := guidanceSession(domain.PhaseFailed)
 	failed.Status.ResumeFrom = domain.PhaseActivating
 
@@ -886,7 +1191,7 @@ func TestSessionGuidanceKeepsPVCIdentityCleanupFreeOfPVDeletion(t *testing.T) {
 				t.Fatalf("guidance=%q", text)
 			}
 
-			if strings.Contains(text, "--delete-rollback-pv") ||
+			if strings.Contains(text, "--delete-source-pv") ||
 				strings.Contains(text, "--delete-temporary") {
 				t.Fatalf("identity cleanup contains storage deletion flags: %q", text)
 			}
@@ -938,7 +1243,7 @@ func TestCapacityFailureGuidanceDoesNotRecommendResume(t *testing.T) {
 		"Destination capacity was exhausted",
 		"migrate-pod abort mig-test --dry-run",
 		"--yes migrate-pod abort mig-test --dry-run=false",
-		"migrate-pod cleanup mig-test --delete-temporary --delete-rollback-pv --finalize --delete-session --dry-run",
+		"migrate-pod cleanup mig-test --source-pv-reclaim-policy Retain --destination-pvc-reclaim-policy Delete --finalize --delete-session --dry-run",
 		"larger --destination-capacity",
 	} {
 		if !strings.Contains(text, want) {
@@ -1203,10 +1508,10 @@ func TestCleanupLockErrorGuidanceDescribesRetryableCleanup(t *testing.T) {
 	command := &guidanceErrorCommand{}
 	session := guidanceSession(domain.PhaseCompleted)
 	options := app.CleanupOptions{
-		DeleteTemporary: true,
-		DeleteRollback:  true,
-		Finalize:        true,
-		DeleteSession:   true,
+		DestinationPVCReclaimPolicy: "Delete",
+		SourcePVReclaimPolicy:       "Delete",
+		Finalize:                    true,
+		DeleteSession:               true,
 	}
 
 	cleanupErr := domain.NewError(
@@ -1230,7 +1535,7 @@ func TestCleanupLockErrorGuidanceDescribesRetryableCleanup(t *testing.T) {
 	for _, want := range []string{
 		"Cleanup stopped before confirmed completion",
 		"migrate-pod status " + session.ID,
-		"migrate-pod cleanup " + session.ID + " --delete-temporary --delete-rollback-pv --finalize --delete-session --dry-run",
+		"migrate-pod cleanup " + session.ID + " --source-pv-reclaim-policy Delete --destination-pvc-reclaim-policy Delete --finalize --delete-session --dry-run",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("guidance=%q missing %q", text, want)
@@ -1358,13 +1663,16 @@ func TestWarmCopyMountGuidanceIncludesAbortCleanupAndOfflineRetry(t *testing.T) 
 			text := output.String()
 
 			workflow := "migrate-pod"
+
+			sourceFlag := " --source-pv-reclaim-policy Retain"
 			if test.operation == domain.OperationCopy {
 				workflow = "copy"
+				sourceFlag = ""
 			}
 
 			for _, want := range []string{
 				workflow + " abort mig-test --dry-run",
-				workflow + " cleanup mig-test --delete-temporary --delete-rollback-pv --finalize --delete-session --dry-run",
+				workflow + " cleanup mig-test" + sourceFlag + " --destination-pvc-reclaim-policy Delete --finalize --delete-session --dry-run",
 				test.want,
 			} {
 				if !strings.Contains(text, want) {

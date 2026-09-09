@@ -561,21 +561,25 @@ func requiresOperationResumeApproval(operation domain.Operation, phase domain.Ph
 }
 
 func bindCleanupFlags(command *cobra.Command, options *app.CleanupOptions) {
+	bindDestinationCleanupFlags(command, options)
 	command.Flags().
-		BoolVar(&options.DeleteTemporary, "delete-temporary", false, "Delete retained staged PVCs owned by the session")
+		StringVar(&options.SourcePVReclaimPolicy, "source-pv-reclaim-policy", "", "Inactive source PV policy: Retain or Delete; defaults to the recorded policy; rollback protects the source")
+}
+
+func bindDestinationCleanupFlags(command *cobra.Command, options *app.CleanupOptions) {
 	command.Flags().
-		BoolVar(&options.DeleteRollback, "delete-rollback-pv", false, "Restore each Released rollback PV's recorded reclaim policy, then delete it")
+		StringVar(&options.DestinationPVCReclaimPolicy, "destination-pvc-reclaim-policy", "", "Destination PVC policy: Retain or Delete; defaults to the recorded policy")
 	command.Flags().
-		BoolVar(&options.Finalize, "finalize", false, "Restore the active PV's recorded reclaim policy")
+		BoolVar(&options.Finalize, "finalize", false, "Release ownership of retained storage and close the session recovery window")
 	command.Flags().
-		BoolVar(&options.DeleteSession, "delete-session", false, "Delete the session ConfigMap after cleanup")
+		BoolVar(&options.DeleteSession, "delete-session", false, "Delete the session record after cleanup (ConfigMap or workflow CR)")
 }
 
 func bindIdentityCleanupFlags(command *cobra.Command, options *app.CleanupOptions) {
 	command.Flags().
-		BoolVar(&options.Finalize, "finalize", false, "Restore the active PV's recorded reclaim policy")
+		BoolVar(&options.Finalize, "finalize", false, "Release storage ownership and restore the active PV's recorded reclaim policy")
 	command.Flags().
-		BoolVar(&options.DeleteSession, "delete-session", false, "Delete the session ConfigMap after cleanup")
+		BoolVar(&options.DeleteSession, "delete-session", false, "Delete the session record after cleanup (ConfigMap or workflow CR)")
 }
 
 func printDeletedSession(cmd *cobra.Command, session *domain.Session) error {
@@ -590,7 +594,7 @@ func printDeletedSession(cmd *cobra.Command, session *domain.Session) error {
 
 	_, err := fmt.Fprintf(
 		cmd.ErrOrStderr(),
-		"session %s cleanup completed; %s and Lease were deleted, and active workload storage was preserved\n",
+		"session %s cleanup completed; %s and Lease were deleted according to the selected resource policies\n",
 		session.ID,
 		record,
 	)

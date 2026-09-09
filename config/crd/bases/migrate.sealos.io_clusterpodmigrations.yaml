@@ -60,6 +60,13 @@ spec:
                 type: boolean
               destinationCapacity:
                 type: string
+              destinationPVCReclaimPolicy:
+                description: DestinationPVCReclaimPolicy controls workflow-owned destination
+                  storage during cleanup.
+                enum:
+                - Retain
+                - Delete
+                type: string
               destinationPath:
                 type: string
               destinationStorageClass:
@@ -120,6 +127,13 @@ spec:
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               sourceNode:
+                type: string
+              sourcePVReclaimPolicy:
+                description: The inactive source PV is retained by default. Mutable
+                  until cleanup.
+                enum:
+                - Retain
+                - Delete
                 type: string
               sourcePath:
                 type: string
@@ -299,6 +313,8 @@ spec:
                 - timeout
                 - internal
                 type: string
+              executionIntentHash:
+                type: string
               failureReason:
                 maxLength: 8192
                 type: string
@@ -448,6 +464,11 @@ spec:
                 properties:
                   deleteExtraneous:
                     type: boolean
+                  destinationPVCReclaimPolicy:
+                    enum:
+                    - Retain
+                    - Delete
+                    type: string
                   openebsLvmEnableShared:
                     type: boolean
                   precopyPasses:
@@ -471,6 +492,11 @@ spec:
                     pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
                   sourceNode:
+                    type: string
+                  sourcePVReclaimPolicy:
+                    enum:
+                    - Retain
+                    - Delete
                     type: string
                   strategies:
                     items:

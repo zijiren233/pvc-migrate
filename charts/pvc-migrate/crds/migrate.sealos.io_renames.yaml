@@ -176,6 +176,8 @@ spec:
                 - timeout
                 - internal
                 type: string
+              executionIntentHash:
+                type: string
               failureReason:
                 maxLength: 8192
                 type: string

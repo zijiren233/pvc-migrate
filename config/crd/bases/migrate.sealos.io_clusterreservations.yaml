@@ -66,6 +66,13 @@ spec:
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
+              destinationPVCReclaimPolicy:
+                description: DestinationPVCReclaimPolicy controls workflow-owned destination
+                  storage during cleanup.
+                enum:
+                - Retain
+                - Delete
+                type: string
               destinationPath:
                 type: string
               destinationStorageClass:
@@ -289,6 +296,8 @@ spec:
                 - timeout
                 - internal
                 type: string
+              executionIntentHash:
+                type: string
               failureReason:
                 maxLength: 8192
                 type: string
@@ -372,6 +381,11 @@ spec:
                     maxLength: 63
                     minLength: 1
                     pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                    type: string
+                  destinationPVCReclaimPolicy:
+                    enum:
+                    - Retain
+                    - Delete
                     type: string
                   sessionNamespace:
                     description: |-

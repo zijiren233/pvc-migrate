@@ -398,9 +398,15 @@ func testCleanupFlagPlacement(t *testing.T, root *cobra.Command) {
 			t.Fatalf("Find(%s cleanup): %v", workflow, err)
 		}
 
-		for _, name := range []string{"delete-temporary", "delete-rollback-pv", "finalize", "delete-session"} {
+		for _, name := range []string{"destination-pvc-reclaim-policy", "finalize", "delete-session"} {
 			if command.Flags().Lookup(name) == nil {
 				t.Fatalf("%s cleanup is missing --%s", workflow, name)
+			}
+		}
+
+		for _, name := range []string{"delete-temporary", "delete-rollback-pv", "delete-source-pv", "delete-destination-pvc"} {
+			if command.Flags().Lookup(name) != nil {
+				t.Fatalf("obsolete flag --%s remains", name)
 			}
 		}
 	}
@@ -417,7 +423,7 @@ func testCleanupFlagPlacement(t *testing.T, root *cobra.Command) {
 			}
 		}
 
-		for _, name := range []string{"delete-temporary", "delete-rollback-pv"} {
+		for _, name := range []string{"delete-temporary", "delete-source-pv"} {
 			if command.Flags().Lookup(name) != nil {
 				t.Fatalf("%s cleanup unexpectedly exposes --%s", workflow, name)
 			}

@@ -11,12 +11,15 @@ type VolumeRequest struct {
 }
 
 type TransferOptions struct {
-	DestinationCapacity     string `json:"destinationCapacity,omitempty"`
-	SourcePath              string `json:"sourcePath,omitempty"`
-	DestinationPath         string `json:"destinationPath,omitempty"`
-	DestinationStorageClass string `json:"destinationStorageClass,omitempty"`
-	SourceNode              string `json:"sourceNode,omitempty"`
-	TargetNode              string `json:"targetNode,omitempty"`
+	// DestinationPVCReclaimPolicy controls workflow-owned destination storage during cleanup.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
+	DestinationCapacity         string `json:"destinationCapacity,omitempty"`
+	SourcePath                  string `json:"sourcePath,omitempty"`
+	DestinationPath             string `json:"destinationPath,omitempty"`
+	DestinationStorageClass     string `json:"destinationStorageClass,omitempty"`
+	SourceNode                  string `json:"sourceNode,omitempty"`
+	TargetNode                  string `json:"targetNode,omitempty"`
 	// +kubebuilder:validation:Enum=auto;require;off
 	CapacityAwareness string `json:"capacityAwareness,omitempty"`
 	// +kubebuilder:validation:MaxItems=32
@@ -29,7 +32,10 @@ type TransferOptions struct {
 
 // +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="at least one source PVC is required"
 type MigrationSpec struct {
-	TransferOptions `json:",inline"`
+	// The inactive source PV is retained by default. Mutable until cleanup.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	SourcePVReclaimPolicy string `json:"sourcePVReclaimPolicy,omitempty"`
+	TransferOptions       `       json:",inline"`
 	// +kubebuilder:validation:MaxItems=1024
 	Volumes []VolumeRequest `json:"volumes"`
 }
@@ -53,8 +59,11 @@ type ReservationSpec struct {
 }
 
 type PodMigrationSpec struct {
-	TransferOptions `json:",inline"`
-	Pod             LocalResourceReference `json:"pod"`
+	// The inactive source PV is retained by default. Mutable until cleanup.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	SourcePVReclaimPolicy string `json:"sourcePVReclaimPolicy,omitempty"`
+	TransferOptions       `                       json:",inline"`
+	Pod                   LocalResourceReference `json:"pod"`
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:default=1
 	PrecopyPasses          int    `json:"precopyPasses,omitempty"`
@@ -83,28 +92,28 @@ type MoveSpec struct {
 }
 
 type ClusterMigrationSpec struct {
-	MigrationSpec      `json:",inline"`
+	MigrationSpec      `              json:",inline"`
 	SourceNamespace    NamespaceName `json:"sourceNamespace"`
 	TemporaryNamespace NamespaceName `json:"temporaryNamespace,omitempty"`
 	SessionNamespace   NamespaceName `json:"sessionNamespace,omitempty"`
 }
 
 type ClusterPodMigrationSpec struct {
-	PodMigrationSpec   `json:",inline"`
+	PodMigrationSpec   `              json:",inline"`
 	SourceNamespace    NamespaceName `json:"sourceNamespace"`
 	TemporaryNamespace NamespaceName `json:"temporaryNamespace,omitempty"`
 	SessionNamespace   NamespaceName `json:"sessionNamespace,omitempty"`
 }
 
 type ClusterCopySpec struct {
-	CopySpec             `json:",inline"`
+	CopySpec             `              json:",inline"`
 	SourceNamespace      NamespaceName `json:"sourceNamespace"`
 	DestinationNamespace NamespaceName `json:"destinationNamespace"`
 	SessionNamespace     NamespaceName `json:"sessionNamespace,omitempty"`
 }
 
 type ClusterReservationSpec struct {
-	ReservationSpec      `json:",inline"`
+	ReservationSpec      `              json:",inline"`
 	SourceNamespace      NamespaceName `json:"sourceNamespace"`
 	DestinationNamespace NamespaceName `json:"destinationNamespace"`
 	SessionNamespace     NamespaceName `json:"sessionNamespace,omitempty"`

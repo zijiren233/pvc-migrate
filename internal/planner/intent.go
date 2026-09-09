@@ -19,26 +19,35 @@ func (p *Planner) ForSubmission(requestOnly bool) *Planner {
 }
 
 func (p *Planner) intentPlan(options planOptions) (*domain.MigrationPlan, error) {
+	if err := domain.ValidateReclaimPolicies(
+		options.SourcePVReclaimPolicy,
+		options.DestinationPVCReclaimPolicy,
+	); err != nil {
+		return nil, err
+	}
+
 	body := map[string]any{
-		"sourceNamespace":         options.SourceNamespace,
-		"destinationNamespace":    options.DestinationNamespace,
-		"temporaryNamespace":      options.TemporaryNamespace,
-		"sessionNamespace":        options.SessionNamespace,
-		"destinationStorageClass": options.DestinationClass,
-		"sourceNode":              options.SourceNode,
-		"targetNode":              options.TargetNode,
-		"capacityAwareness":       options.CapacityAwareness,
-		"strategies":              options.Strategies,
-		"verifyChecksum":          options.VerifyChecksum,
-		"deleteExtraneous":        options.DeleteExtraneous,
-		"allowVolumeShrink":       options.AllowVolumeShrink,
-		"skipSourceUsageCheck":    options.SkipSourceUsageCheck,
-		"online":                  options.Online,
-		"precopyPasses":           options.PrecopyPasses,
-		"switchoverCandidate":     options.SwitchoverCandidate,
-		"allowLeaderDowntime":     options.AllowLeaderDowntime,
-		"forceReprovision":        options.ForceReprovision,
-		"openebsLvmEnableShared":  options.OpenEBSLVMEnableShared,
+		"sourcePVReclaimPolicy":       options.SourcePVReclaimPolicy,
+		"destinationPVCReclaimPolicy": options.DestinationPVCReclaimPolicy,
+		"sourceNamespace":             options.SourceNamespace,
+		"destinationNamespace":        options.DestinationNamespace,
+		"temporaryNamespace":          options.TemporaryNamespace,
+		"sessionNamespace":            options.SessionNamespace,
+		"destinationStorageClass":     options.DestinationClass,
+		"sourceNode":                  options.SourceNode,
+		"targetNode":                  options.TargetNode,
+		"capacityAwareness":           options.CapacityAwareness,
+		"strategies":                  options.Strategies,
+		"verifyChecksum":              options.VerifyChecksum,
+		"deleteExtraneous":            options.DeleteExtraneous,
+		"allowVolumeShrink":           options.AllowVolumeShrink,
+		"skipSourceUsageCheck":        options.SkipSourceUsageCheck,
+		"online":                      options.Online,
+		"precopyPasses":               options.PrecopyPasses,
+		"switchoverCandidate":         options.SwitchoverCandidate,
+		"allowLeaderDowntime":         options.AllowLeaderDowntime,
+		"forceReprovision":            options.ForceReprovision,
+		"openebsLvmEnableShared":      options.OpenEBSLVMEnableShared,
 	}
 	if options.PodName != "" {
 		body["pod"] = v1alpha1.LocalResourceReference{Name: options.PodName}

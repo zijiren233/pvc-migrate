@@ -20,10 +20,10 @@ import (
 )
 
 type CleanupOptions struct {
-	DeleteTemporary bool
-	DeleteRollback  bool
-	Finalize        bool
-	DeleteSession   bool
+	SourcePVReclaimPolicy       string
+	DestinationPVCReclaimPolicy string
+	Finalize                    bool
+	DeleteSession               bool
 }
 
 // CleanupPodBlockerError identifies the Pod and controller that keep a PVC
@@ -77,134 +77,7 @@ func (s *Service) cleanup(
 	session *domain.Session,
 	options CleanupOptions,
 ) error {
-	if session == nil {
-		return domain.NewError(domain.ErrorValidation, "cleanup", "session is nil")
-	}
-
-	if session.PlanPending {
-		if options.DeleteSession {
-			return s.deleteCleanupSession(ctx, session)
-		}
-		return nil
-	}
-
-	if !cleanupPhaseAllowed(session) {
-		return domain.NewError(
-			domain.ErrorPrecondition,
-			"cleanup",
-			fmt.Sprintf("session phase %s is still active", session.Status.Phase),
-		)
-	}
-
-	if err := s.restoreOpenEBSLVMSharedMounts(ctx, session); err != nil {
-		return err
-	}
-
-	if err := s.validateCleanup(ctx, session, options); err != nil {
-		return err
-	}
-
-	s.logInfo(
-		"cleanup started",
-		"session",
-		session.ID,
-		"phase",
-		session.Status.Phase,
-		"deleteTemporary",
-		options.DeleteTemporary,
-		"deleteRollback",
-		options.DeleteRollback,
-		"finalize",
-		options.Finalize,
-		"deleteSession",
-		options.DeleteSession,
-	)
-
-	if !session.Spec.Operation().RebindsPVC() &&
-		(options.DeleteTemporary || options.DeleteRollback || options.DeleteSession) {
-		if err := s.recoverDestinationRefs(ctx, session); err != nil {
-			return err
-		}
-	}
-
-	if err := validateCleanupSessionDeletion(session, options); err != nil {
-		return err
-	}
-
-	if err := s.validateAbortedSources(ctx, session); err != nil {
-		return err
-	}
-
-	if err := s.deleteReservationPods(ctx, session); err != nil {
-		return err
-	}
-
-	if err := s.releaseAbortedSources(ctx, session); err != nil {
-		return err
-	}
-
-	if options.DeleteTemporary {
-		if err := s.deleteTemporaryPVCs(ctx, session); err != nil {
-			return err
-		}
-	}
-
-	if options.DeleteRollback {
-		if err := s.deleteRollbackPVs(ctx, session); err != nil {
-			return err
-		}
-	}
-
-	if options.Finalize {
-		if err := s.finalizeCleanupResources(ctx, session, options); err != nil {
-			return err
-		}
-	}
-
-	if (session.Spec.Type == domain.SessionTypeBackup || session.Spec.Type == domain.SessionTypeRestore) &&
-		(options.Finalize || options.DeleteSession) {
-		if err := s.cleanupBackupCredentials(ctx, session); err != nil {
-			return err
-		}
-	}
-
-	if options.DeleteSession {
-		if err := s.deleteCleanupSession(ctx, session); err != nil {
-			return err
-		}
-	}
-
-	s.logInfo("cleanup completed", "session", session.ID)
-
-	return nil
-}
-
-func validateCleanupSessionDeletion(session *domain.Session, options CleanupOptions) error {
-	if !options.DeleteSession {
-		return nil
-	}
-
-	if !options.Finalize {
-		return domain.NewError(
-			domain.ErrorPrecondition,
-			"cleanup",
-			"deleting the session requires --finalize",
-		)
-	}
-
-	for index := range session.Spec.Volumes {
-		_, rollback, _ := cleanupPVRefs(session, &session.Spec.Volumes[index])
-		if rollback.Name != "" && !options.DeleteRollback &&
-			!preservesCopyOutput(session, options) {
-			return domain.NewError(
-				domain.ErrorPrecondition,
-				"cleanup",
-				"deleting the session requires --delete-rollback-pv while a rollback PV is recorded",
-			)
-		}
-	}
-
-	return nil
+	return s.cleanupByReclaimPolicy(ctx, session, options, false)
 }
 
 func (s *Service) validateAbortedSources(ctx context.Context, session *domain.Session) error {
@@ -249,163 +122,6 @@ func (s *Service) releaseAbortedSources(ctx context.Context, session *domain.Ses
 	}
 
 	return nil
-}
-
-func (s *Service) deleteTemporaryPVCs(ctx context.Context, session *domain.Session) error {
-	for index := range session.Spec.Volumes {
-		volume := &session.Spec.Volumes[index]
-		if volume.DestinationPVC.UID == "" {
-			continue
-		}
-
-		if err := s.ensurePVCUnusedForSession(ctx, volume.DestinationPVC, session); err != nil {
-			return err
-		}
-
-		if err := s.deleteManagedPVC(ctx, session.ID, volume.DestinationPVC); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (s *Service) deleteRollbackPVs(ctx context.Context, session *domain.Session) error {
-	expectedRole := cleanupRollbackRole(session)
-	for index := range session.Spec.Volumes {
-		volume := &session.Spec.Volumes[index]
-
-		_, rollback, _ := cleanupPVRefs(session, volume)
-		if rollback.Name == "" {
-			continue
-		}
-
-		var uncheckpointedClaim *domain.ObjectReference
-		if uncheckpointedDestination(session, index) {
-			uncheckpointedClaim = &volume.DestinationPVC
-		}
-
-		if err := s.deleteRollbackPV(
-			ctx,
-			session.ID,
-			rollback,
-			expectedRole,
-			cleanupRollbackReclaimPolicy(session, volume),
-			uncheckpointedClaim,
-		); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (s *Service) finalizeCleanupResources(
-	ctx context.Context,
-	session *domain.Session,
-	options CleanupOptions,
-) error {
-	for index := range session.Spec.Volumes {
-		if err := s.finalizeCleanupVolume(ctx, session, options, index); err != nil {
-			return err
-		}
-	}
-
-	return s.releaseStandalonePodOwnership(ctx, session)
-}
-
-func (s *Service) finalizeCleanupVolume(
-	ctx context.Context,
-	session *domain.Session,
-	options CleanupOptions,
-	index int,
-) error {
-	volume := &session.Spec.Volumes[index]
-
-	active, _, policy := cleanupPVRefs(session, volume)
-	if active.Name == "" || uncheckpointedSource(session, index) {
-		return nil
-	}
-
-	skip, err := s.validateAbortedActivePV(ctx, session, index, active)
-	if err != nil {
-		return err
-	}
-
-	if skip {
-		return nil
-	}
-
-	activePVC := session.Status.Volumes[index].Activation.ActivePVC
-	if activePVC.Name == "" &&
-		(cleanupKeepsSource(session) || session.Status.Phase == domain.PhaseAborted) {
-		activePVC = volume.SourcePVC
-	}
-
-	if activePVC.Name != "" {
-		if err := kube.FinalizePVC(
-			ctx,
-			s.client,
-			activePVC,
-			session.ID,
-			volume.SourcePVCMetadata,
-		); err != nil {
-			return err
-		}
-	}
-
-	if err := s.finalizeActivePV(ctx, session.ID, active, policy); err != nil {
-		return err
-	}
-
-	if preservesCopyOutput(session, options) && volume.DestinationPV.Name != "" {
-		if err := kube.FinalizePVC(
-			ctx,
-			s.client,
-			volume.DestinationPVC,
-			session.ID,
-			domain.PVCMetadata{},
-		); err != nil {
-			return err
-		}
-
-		return s.finalizeActivePV(
-			ctx,
-			session.ID,
-			volume.DestinationPV,
-			volume.DestinationPolicy,
-		)
-	}
-
-	return nil
-}
-
-func (s *Service) validateAbortedActivePV(
-	ctx context.Context,
-	session *domain.Session,
-	index int,
-	active domain.ObjectReference,
-) (bool, error) {
-	if session.Status.Phase != domain.PhaseAborted ||
-		session.Status.Volumes[index].Activation.ActivePVC.Name != "" {
-		return false, nil
-	}
-
-	_, err := s.client.CoreV1().PersistentVolumes().Get(ctx, active.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return true, nil
-	}
-
-	if err != nil {
-		return false, domain.WrapError(
-			domain.ErrorKubernetes,
-			"cleanup",
-			"read PV "+active.Name,
-			err,
-		)
-	}
-
-	return false, nil
 }
 
 func (s *Service) deleteCleanupSession(ctx context.Context, session *domain.Session) error {
@@ -678,15 +394,6 @@ func (s *Service) inspectPVCUnused(
 	sessionID string,
 ) (*corev1.PersistentVolumeClaim, error) {
 	return s.inspectPVCUnusedWithOperations(ctx, ref, sessionID, nil)
-}
-
-func (s *Service) ensurePVCUnusedForSession(
-	ctx context.Context,
-	ref domain.ObjectReference,
-	session *domain.Session,
-) error {
-	_, err := s.inspectPVCUnusedForSession(ctx, ref, session)
-	return err
 }
 
 func (s *Service) inspectPVCUnusedForSession(
@@ -1567,7 +1274,7 @@ func (s *Service) deleteManagedPVC(
 	return nil
 }
 
-func (s *Service) deleteRollbackPV(
+func (s *Service) deleteReclaimedPV(
 	ctx context.Context,
 	sessionID string,
 	ref domain.ObjectReference,
@@ -1583,7 +1290,7 @@ func (s *Service) deleteRollbackPV(
 	if err != nil {
 		return domain.WrapError(
 			domain.ErrorKubernetes,
-			"cleanup rollback PV",
+			"cleanup PV",
 			"read PV "+ref.Name,
 			err,
 		)
@@ -1592,7 +1299,7 @@ func (s *Service) deleteRollbackPV(
 	if !cleanupPVIdentityMatches(pv, ref, sessionID, expectedRole, uncheckpointedClaim) {
 		return domain.NewError(
 			domain.ErrorConflict,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s identity, ownership, or role changed", ref.Name),
 		)
 	}
@@ -1614,7 +1321,7 @@ func (s *Service) deleteRollbackPV(
 	if pv.Status.Phase != corev1.VolumeReleased && pv.Status.Phase != corev1.VolumeAvailable {
 		return domain.NewError(
 			domain.ErrorPrecondition,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s phase %s must be Released or Available", pv.Name, pv.Status.Phase),
 		)
 	}
@@ -1638,7 +1345,7 @@ func (s *Service) deleteRollbackPV(
 		!apierrors.IsNotFound(err) {
 		return domain.WrapError(
 			domain.ErrorKubernetes,
-			"cleanup rollback PV",
+			"cleanup PV",
 			"delete PV "+pv.Name,
 			err,
 		)
@@ -1658,7 +1365,7 @@ func (s *Service) restoreRollbackPVReclaimPolicy(
 	if !validReclaimPolicy(policy) {
 		return nil, domain.NewError(
 			domain.ErrorPrecondition,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s has no valid original reclaim policy", ref.Name),
 		)
 	}
@@ -1684,7 +1391,7 @@ func (s *Service) restoreRollbackPVReclaimPolicy(
 			!cleanupRollbackPVPolicyMatches(current, policy, uncheckpointedClaim) {
 			return domain.NewError(
 				domain.ErrorConflict,
-				"cleanup rollback PV",
+				"cleanup PV",
 				fmt.Sprintf(
 					"PV %s identity, ownership, state, or reclaim policy changed",
 					ref.Name,
@@ -1714,7 +1421,7 @@ func (s *Service) restoreRollbackPVReclaimPolicy(
 
 		return nil, domain.WrapError(
 			domain.ErrorKubernetes,
-			"cleanup rollback PV",
+			"cleanup PV",
 			"restore reclaim policy for PV "+ref.Name,
 			err,
 		)
@@ -1766,7 +1473,7 @@ func (s *Service) waitForRollbackPVDeletion(
 			if current.UID != ref.UID {
 				return false, domain.NewError(
 					domain.ErrorConflict,
-					"cleanup rollback PV",
+					"cleanup PV",
 					fmt.Sprintf("PV %s was replaced while waiting for deletion", ref.Name),
 				)
 			}
@@ -1777,7 +1484,7 @@ func (s *Service) waitForRollbackPVDeletion(
 	if err != nil && domain.CategoryOf(err) == domain.ErrorInternal {
 		return domain.WrapError(
 			domain.ErrorKubernetes,
-			"cleanup rollback PV",
+			"cleanup PV",
 			"wait for PV "+ref.Name+" deletion",
 			err,
 		)
@@ -1817,7 +1524,7 @@ func (s *Service) waitForRollbackPVRelease(
 		if domain.CategoryOf(err) == domain.ErrorInternal {
 			return nil, domain.WrapError(
 				domain.ErrorKubernetes,
-				"cleanup rollback PV",
+				"cleanup PV",
 				fmt.Sprintf("wait for PV %s release", ref.Name),
 				err,
 			)
@@ -1834,7 +1541,7 @@ func (s *Service) waitForRollbackPVRelease(
 	if err != nil {
 		return nil, domain.WrapError(
 			domain.ErrorKubernetes,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("read PV %s after release", ref.Name),
 			err,
 		)
@@ -1843,7 +1550,7 @@ func (s *Service) waitForRollbackPVRelease(
 	if !cleanupPVIdentityMatches(current, ref, sessionID, expectedRole, uncheckpointedClaim) {
 		return nil, domain.NewError(
 			domain.ErrorConflict,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s identity, ownership, or role changed", ref.Name),
 		)
 	}
@@ -1860,7 +1567,7 @@ func (s *Service) validateDeletingRollbackClaim(
 		pv.Spec.ClaimRef.UID == "" {
 		return domain.NewError(
 			domain.ErrorPrecondition,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s phase %s must be Released or Available", pv.Name, pv.Status.Phase),
 		)
 	}
@@ -1875,7 +1582,7 @@ func (s *Service) validateDeletingRollbackClaim(
 	if err != nil {
 		return domain.WrapError(
 			domain.ErrorKubernetes,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("read PVC %s/%s", pv.Spec.ClaimRef.Namespace, pv.Spec.ClaimRef.Name),
 			err,
 		)
@@ -1884,7 +1591,7 @@ func (s *Service) validateDeletingRollbackClaim(
 	if claim.UID != pv.Spec.ClaimRef.UID {
 		return domain.NewError(
 			domain.ErrorConflict,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s ClaimRef UID changed", pv.Name),
 		)
 	}
@@ -1892,7 +1599,7 @@ func (s *Service) validateDeletingRollbackClaim(
 	if claim.DeletionTimestamp == nil {
 		return domain.NewError(
 			domain.ErrorPrecondition,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf(
 				"PV %s is still claimed by PVC %s/%s",
 				pv.Name,
@@ -1923,7 +1630,7 @@ func (s *Service) rollbackPVReleased(
 	if !cleanupPVIdentityMatches(current, ref, sessionID, expectedRole, uncheckpointedClaim) {
 		return false, domain.NewError(
 			domain.ErrorConflict,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf(
 				"PV %s identity, ownership, or role changed while waiting for release",
 				ref.Name,
@@ -1939,7 +1646,7 @@ func (s *Service) rollbackPVReleased(
 	if current.Status.Phase != corev1.VolumeBound {
 		return false, domain.NewError(
 			domain.ErrorPrecondition,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf(
 				"PV %s phase %s must be Released or Available",
 				current.Name,
@@ -1953,7 +1660,7 @@ func (s *Service) rollbackPVReleased(
 		current.Spec.ClaimRef.UID == "" {
 		return false, domain.NewError(
 			domain.ErrorPrecondition,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s phase %s has no ClaimRef", current.Name, current.Status.Phase),
 		)
 	}
@@ -1972,7 +1679,7 @@ func (s *Service) rollbackPVReleased(
 	if claim.UID != current.Spec.ClaimRef.UID {
 		return false, domain.NewError(
 			domain.ErrorConflict,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf("PV %s ClaimRef UID changed while waiting for release", ref.Name),
 		)
 	}
@@ -1980,7 +1687,7 @@ func (s *Service) rollbackPVReleased(
 	if claim.DeletionTimestamp == nil {
 		return false, domain.NewError(
 			domain.ErrorPrecondition,
-			"cleanup rollback PV",
+			"cleanup PV",
 			fmt.Sprintf(
 				"PV %s is still claimed by PVC %s/%s",
 				current.Name,
@@ -2073,7 +1780,7 @@ func (s *Service) finalizeActivePV(
 		}
 
 		if pv.Labels[kube.SessionKey] != sessionID ||
-			(role != kube.ResourceRoleActive && role != kube.ResourceRoleSource && role != kube.ResourceRoleRename && role != kube.ResourceRoleDestination) {
+			(role != kube.ResourceRoleActive && role != kube.ResourceRoleSource && role != kube.ResourceRoleRename && role != kube.ResourceRoleDestination && role != kube.ResourceRoleRollback) {
 			return domain.NewError(
 				domain.ErrorConflict,
 				"finalize active PV",
