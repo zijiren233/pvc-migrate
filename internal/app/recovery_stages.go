@@ -10,6 +10,15 @@ import (
 )
 
 func (s *Service) abort(ctx context.Context, session *domain.Session) error {
+	if session.PlanPending {
+		return s.finish(
+			ctx,
+			session,
+			domain.PhaseAborted,
+			"workflow aborted before execution planning",
+		)
+	}
+
 	if session.Status.Phase == domain.PhaseAborted {
 		return s.restoreOpenEBSLVMSharedMounts(ctx, session)
 	}

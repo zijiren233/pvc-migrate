@@ -101,7 +101,6 @@ func (r *rootState) runBackupCommand(cmd *cobra.Command, flags *backupFlags, dry
 	)
 }
 
-//nolint:gocyclo // Submission, fallback, and reporting branches form one transactional CLI workflow.
 func (r *rootState) runBackupTransfer(
 	cmd *cobra.Command,
 	flags *bucketFlags,
@@ -163,6 +162,21 @@ func (r *rootState) runBackupTransfer(
 		))
 	}
 
+	if controllerWorkflow && !dryRun {
+		return r.submitRepositoryIntent(ctx, cmd, runtime, flags, v1alpha1.BackupSpec{
+			SourcePVC: v1alpha1.LocalResourceReference{
+				Name: flags.pvc,
+			},
+			Path: flags.path,
+			Name: flags.name,
+			RepositoryRef: v1alpha1.LocalObjectReference{
+				Name: flags.backupRepository,
+			},
+			Online:                 online,
+			OpenEBSLVMEnableShared: openEBSLVMEnableShared,
+		}, domain.ControllerKindBackup)
+	}
+
 	var store *objectstore.Store
 	if flags.backupRepository != "" {
 		store, err = r.newControllerRepositoryStore(ctx, runtime, flags)
@@ -221,57 +235,22 @@ func (r *rootState) runBackupTransfer(
 		return reportApprovalError(cmd, err)
 	}
 
-	var session *domain.Session
-
 	if err := requireControllerWorkflow(runtime, domain.SessionTypeBackup); err != nil {
 		return reportTransferError(cmd, "backup", flags.namespace, flags.pvc, err)
 	}
 
-	if controllerWorkflowAvailable(runtime, domain.SessionTypeBackup) {
-		var submitErr error
+	if err := backup.Run(ctx, runtime.clients.Kubernetes, request, false); err != nil {
+		lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		session, lookupErr := kube.GetSessionByType(lookupCtx, runtime.store,
+			r.global.sessionNamespace, flags.id, domain.SessionTypeBackup)
 
-		session, submitErr = backup.Submit(
-			ctx,
-			runtime.clients.Kubernetes,
-			request,
-			plan.PVCUID,
-			plan.PVUID,
-		)
-		if submitErr != nil {
-			return reportTransferError(cmd, "backup", flags.namespace, flags.pvc, submitErr)
+		lookupCancel()
+
+		if lookupErr == nil {
+			return reportSessionError(cmd, session, err)
 		}
 
-		if deferred, deferErr := deferControllerExecution(ctx, cmd, runtime, session); deferred {
-			return deferErr
-		}
-	}
-
-	if session == nil || session.Backend != kube.SessionBackendCRD {
-		// Keep the durable session identity when execution remains in session
-		// mode, so the record is not prepared and persisted a second time.
-		request.BackupSession = session
-		if err := backup.Run(ctx, runtime.clients.Kubernetes, request, false); err != nil {
-			lookupCtx, lookupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			session, lookupErr := kube.GetSessionByType(
-				lookupCtx,
-				runtime.store,
-				r.global.sessionNamespace,
-				flags.id,
-				domain.SessionTypeBackup,
-			)
-
-			lookupCancel()
-
-			if lookupErr == nil {
-				return reportSessionError(cmd, session, err)
-			}
-
-			return reportTransferError(cmd, "backup", flags.namespace, flags.pvc, err)
-		}
-	}
-
-	if session != nil && session.Backend == kube.SessionBackendCRD {
-		return nil
+		return reportTransferError(cmd, "backup", flags.namespace, flags.pvc, err)
 	}
 
 	return r.printObjectTransferResult(cmd, runtime, flags, "backup", false, online, plan, store)

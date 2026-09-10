@@ -10,27 +10,29 @@ import (
 )
 
 type podMigrationFlags struct {
-	sessionID              string
-	sourceNamespace        string
-	temporaryNamespace     string
-	destinationCapacities  []string
-	sourcePaths            []string
-	destinationPaths       []string
-	allowVolumeShrink      bool
-	skipSourceUsageCheck   bool
-	sourceNode             string
-	targetNode             string
-	destinationClass       string
-	capacityAwareness      string
-	strategies             []string
-	verifyChecksum         bool
-	deleteExtraneous       bool
-	podName                string
-	switchoverCandidate    string
-	allowLeaderDowntime    bool
-	forceReprovision       bool
-	precopyPasses          int
-	openEBSLVMEnableShared bool
+	sessionID                   string
+	sourceNamespace             string
+	temporaryNamespace          string
+	destinationCapacities       []string
+	sourcePaths                 []string
+	destinationPaths            []string
+	allowVolumeShrink           bool
+	skipSourceUsageCheck        bool
+	sourceNode                  string
+	targetNode                  string
+	destinationClass            string
+	capacityAwareness           string
+	strategies                  []string
+	verifyChecksum              bool
+	deleteExtraneous            bool
+	podName                     string
+	switchoverCandidate         string
+	allowLeaderDowntime         bool
+	forceReprovision            bool
+	precopyPasses               int
+	openEBSLVMEnableShared      bool
+	sourcePVReclaimPolicy       string
+	destinationPVCReclaimPolicy string
 }
 
 func (f *podMigrationFlags) bind(command *cobra.Command) {
@@ -66,6 +68,18 @@ func (f *podMigrationFlags) bind(command *cobra.Command) {
 		"allow-volume-shrink",
 		false,
 		"Allow destination capacity below the source PV capacity; only use when copied data is known to fit",
+	)
+	flags.StringVar(
+		&f.sourcePVReclaimPolicy,
+		"source-pv-reclaim-policy",
+		string(domain.SourcePVReclaimRetain),
+		"Policy for the old source PV after migration: Retain or Delete",
+	)
+	flags.StringVar(
+		&f.destinationPVCReclaimPolicy,
+		"destination-pvc-reclaim-policy",
+		string(domain.DestinationPVCReclaimRetain),
+		"Destination storage policy on cleanup, including after rollback: Retain or Delete",
 	)
 	flags.BoolVar(
 		&f.skipSourceUsageCheck,
@@ -178,30 +192,32 @@ func (f *podMigrationFlags) planOptions(
 	}
 
 	return planner.PodMigrationOptions{
-		SessionID:              id,
-		SourceNamespace:        f.sourceNamespace,
-		TemporaryNamespace:     temporaryNamespace,
-		SessionNamespace:       state.global.sessionNamespace,
-		StagingNamespace:       stagingNamespace,
-		ToolImage:              state.global.toolImage,
-		DestinationCapacities:  append([]string(nil), f.destinationCapacities...),
-		SourcePaths:            append([]string(nil), f.sourcePaths...),
-		DestinationPaths:       append([]string(nil), f.destinationPaths...),
-		AllowVolumeShrink:      f.allowVolumeShrink,
-		SkipSourceUsageCheck:   f.skipSourceUsageCheck,
-		PodName:                f.podName,
-		SourceNode:             f.sourceNode,
-		TargetNode:             f.targetNode,
-		DestinationClass:       f.destinationClass,
-		CapacityAwareness:      domain.CapacityAwareness(f.capacityAwareness),
-		Strategies:             append([]string(nil), f.strategies...),
-		VerifyChecksum:         f.verifyChecksum,
-		DeleteExtraneous:       f.deleteExtraneous,
-		SwitchoverCandidate:    f.switchoverCandidate,
-		AllowLeaderDowntime:    f.allowLeaderDowntime,
-		ForceReprovision:       f.forceReprovision,
-		PrecopyPasses:          f.precopyPasses,
-		OpenEBSLVMEnableShared: f.openEBSLVMEnableShared,
+		SessionID:                   id,
+		SourceNamespace:             f.sourceNamespace,
+		TemporaryNamespace:          temporaryNamespace,
+		SessionNamespace:            state.global.sessionNamespace,
+		StagingNamespace:            stagingNamespace,
+		ToolImage:                   state.global.toolImage,
+		DestinationCapacities:       append([]string(nil), f.destinationCapacities...),
+		SourcePaths:                 append([]string(nil), f.sourcePaths...),
+		DestinationPaths:            append([]string(nil), f.destinationPaths...),
+		AllowVolumeShrink:           f.allowVolumeShrink,
+		SkipSourceUsageCheck:        f.skipSourceUsageCheck,
+		PodName:                     f.podName,
+		SourceNode:                  f.sourceNode,
+		TargetNode:                  f.targetNode,
+		DestinationClass:            f.destinationClass,
+		CapacityAwareness:           domain.CapacityAwareness(f.capacityAwareness),
+		Strategies:                  append([]string(nil), f.strategies...),
+		VerifyChecksum:              f.verifyChecksum,
+		DeleteExtraneous:            f.deleteExtraneous,
+		SwitchoverCandidate:         f.switchoverCandidate,
+		AllowLeaderDowntime:         f.allowLeaderDowntime,
+		ForceReprovision:            f.forceReprovision,
+		PrecopyPasses:               f.precopyPasses,
+		OpenEBSLVMEnableShared:      f.openEBSLVMEnableShared,
+		SourcePVReclaimPolicy:       f.sourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: f.destinationPVCReclaimPolicy,
 	}, nil
 }
 
@@ -396,7 +412,8 @@ func (r *rootState) runPodMigrateCommand(
 	)
 	options.StagingNamespace = options.TemporaryNamespace
 
-	plan, err := runtime.planner.PlanPodMigration(ctx, options)
+	plan, err := runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+		PlanPodMigration(ctx, options)
 	if err != nil {
 		return reportPlanningError(cmd, err)
 	}

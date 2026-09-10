@@ -135,6 +135,18 @@ func (p *Planner) checkSessionOwnership(
 	)
 }
 
+func retainedCleanupArgs(session *domain.Session, workflow string) string {
+	args := fmt.Sprintf("%s cleanup %s", workflow, session.ID)
+	switch session.Spec.Operation() {
+	case domain.OperationMigrate, domain.OperationMigratePod:
+		args += " --source-pv-reclaim-policy Retain --destination-pvc-reclaim-policy Retain"
+	case domain.OperationCopy, domain.OperationReserve:
+		args += " --destination-pvc-reclaim-policy Retain"
+	}
+
+	return args + " --finalize --delete-session"
+}
+
 func persistedOwnerGuidance(session *domain.Session) string {
 	base := sessionCLIBase(session.Spec.SessionNamespace, false)
 
@@ -157,11 +169,7 @@ func persistedOwnerGuidance(session *domain.Session) string {
 	status := fmt.Sprintf("inspect with `%s %s status %s`", base, workflow, session.ID)
 	switch session.Status.Phase {
 	case domain.PhaseCompleted, domain.PhaseAborted, domain.PhaseRolledBack:
-		args := fmt.Sprintf(
-			"%s cleanup %s --delete-temporary --delete-rollback-pv --finalize --delete-session",
-			workflow,
-			session.ID,
-		)
+		args := retainedCleanupArgs(session, workflow)
 
 		return fmt.Sprintf(
 			"%s; validate cleanup with `%s %s`, then execute `%s %s --dry-run=false`",
@@ -173,7 +181,7 @@ func persistedOwnerGuidance(session *domain.Session) string {
 		)
 	case domain.PhaseWarmCopied:
 		if session.Spec.Operation() == domain.OperationCopy {
-			args := fmt.Sprintf("%s cleanup %s --finalize --delete-session", workflow, session.ID)
+			args := retainedCleanupArgs(session, workflow)
 
 			return fmt.Sprintf(
 				"%s; preserve the copied PVC and validate cleanup with `%s %s`, then execute `%s %s --dry-run=false`",
@@ -186,11 +194,7 @@ func persistedOwnerGuidance(session *domain.Session) string {
 		}
 	case domain.PhaseReserved:
 		if session.Spec.Operation() == domain.OperationReserve {
-			args := fmt.Sprintf(
-				"%s cleanup %s --delete-temporary --delete-rollback-pv --finalize --delete-session",
-				workflow,
-				session.ID,
-			)
+			args := retainedCleanupArgs(session, workflow)
 
 			return fmt.Sprintf(
 				"%s; validate copy with `%s copy --session %s`, then execute `%s copy --session %s --dry-run=false`; close the reservation by validating `%s %s`, then executing `%s %s --dry-run=false`",

@@ -1,0 +1,151 @@
+package v1alpha1
+
+// VolumeRequest selects a source and optionally constrains its identity.
+// The controller resolves and freezes all discovered properties in status.plan.
+type VolumeRequest struct {
+	SourcePVC      LocalResourceReference  `json:"sourcePVC"`
+	SourcePV       *LocalResourceReference `json:"sourcePV,omitempty"`
+	DestinationPVC *LocalResourceReference `json:"destinationPVC,omitempty"`
+	Capacity       string                  `json:"capacity,omitempty"`
+	TransferScope  *TransferScope          `json:"transferScope,omitempty"`
+}
+
+type TransferOptions struct {
+	// DestinationPVCReclaimPolicy controls workflow-owned destination storage during cleanup.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
+	DestinationCapacity         string `json:"destinationCapacity,omitempty"`
+	SourcePath                  string `json:"sourcePath,omitempty"`
+	DestinationPath             string `json:"destinationPath,omitempty"`
+	DestinationStorageClass     string `json:"destinationStorageClass,omitempty"`
+	SourceNode                  string `json:"sourceNode,omitempty"`
+	TargetNode                  string `json:"targetNode,omitempty"`
+	// +kubebuilder:validation:Enum=auto;require;off
+	CapacityAwareness string `json:"capacityAwareness,omitempty"`
+	// +kubebuilder:validation:MaxItems=32
+	Strategies           []string `json:"strategies,omitempty"`
+	VerifyChecksum       bool     `json:"verifyChecksum,omitempty"`
+	DeleteExtraneous     bool     `json:"deleteExtraneous,omitempty"`
+	AllowVolumeShrink    bool     `json:"allowVolumeShrink,omitempty"`
+	SkipSourceUsageCheck bool     `json:"skipSourceUsageCheck,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="has(self.volumes) && size(self.volumes) > 0",message="at least one source PVC is required"
+type MigrationSpec struct {
+	// The inactive source PV is retained by default. Mutable until cleanup.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	SourcePVReclaimPolicy string `json:"sourcePVReclaimPolicy,omitempty"`
+	TransferOptions       `       json:",inline"`
+	// +kubebuilder:validation:MaxItems=1024
+	Volumes []VolumeRequest `json:"volumes"`
+}
+
+// +kubebuilder:validation:XValidation:rule="(has(self.volumes) && size(self.volumes) > 0) || has(self.pod)",message="select source volumes or a Pod; volumes alongside a Pod are overrides"
+type CopySpec struct {
+	TransferOptions `json:",inline"`
+	// +kubebuilder:validation:MaxItems=1024
+	Volumes []VolumeRequest         `json:"volumes,omitempty"`
+	Pod     *LocalResourceReference `json:"pod,omitempty"`
+	Online  bool                    `json:"online,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="(has(self.volumes) && size(self.volumes) > 0) || has(self.pod)",message="select source volumes or a Pod; volumes alongside a Pod are overrides"
+type ReservationSpec struct {
+	// Reservation retains these settings for a later copy of the reserved volumes.
+	TransferOptions `json:",inline"`
+	// +kubebuilder:validation:MaxItems=1024
+	Volumes []VolumeRequest         `json:"volumes,omitempty"`
+	Pod     *LocalResourceReference `json:"pod,omitempty"`
+}
+
+type PodMigrationSpec struct {
+	// The inactive source PV is retained by default. Mutable until cleanup.
+	// +kubebuilder:validation:Enum=Retain;Delete
+	SourcePVReclaimPolicy string `json:"sourcePVReclaimPolicy,omitempty"`
+	TransferOptions       `                       json:",inline"`
+	Pod                   LocalResourceReference `json:"pod"`
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:default=1
+	PrecopyPasses          int    `json:"precopyPasses,omitempty"`
+	SwitchoverCandidate    string `json:"switchoverCandidate,omitempty"`
+	AllowLeaderDowntime    bool   `json:"allowLeaderDowntime,omitempty"`
+	ForceReprovision       bool   `json:"forceReprovision,omitempty"`
+	OpenEBSLVMEnableShared bool   `json:"openebsLvmEnableShared,omitempty"`
+	// Optional per-volume capacity and path settings, keyed by source PVC name.
+	// +kubebuilder:validation:MaxItems=1024
+	Volumes []VolumeRequest `json:"volumes,omitempty"`
+}
+
+type RenameSpec struct {
+	SourcePVC      LocalResourceReference  `json:"sourcePVC"`
+	SourcePV       *LocalResourceReference `json:"sourcePV,omitempty"`
+	DestinationPVC LocalResourceReference  `json:"destinationPVC"`
+}
+
+type MoveSpec struct {
+	SourceNamespace      NamespaceName           `json:"sourceNamespace"`
+	DestinationNamespace NamespaceName           `json:"destinationNamespace"`
+	SessionNamespace     NamespaceName           `json:"sessionNamespace,omitempty"`
+	SourcePVC            LocalResourceReference  `json:"sourcePVC"`
+	SourcePV             *LocalResourceReference `json:"sourcePV,omitempty"`
+	DestinationPVC       *LocalResourceReference `json:"destinationPVC,omitempty"`
+}
+
+type ClusterMigrationSpec struct {
+	MigrationSpec      `              json:",inline"`
+	SourceNamespace    NamespaceName `json:"sourceNamespace"`
+	TemporaryNamespace NamespaceName `json:"temporaryNamespace,omitempty"`
+	SessionNamespace   NamespaceName `json:"sessionNamespace,omitempty"`
+}
+
+type ClusterPodMigrationSpec struct {
+	PodMigrationSpec   `              json:",inline"`
+	SourceNamespace    NamespaceName `json:"sourceNamespace"`
+	TemporaryNamespace NamespaceName `json:"temporaryNamespace,omitempty"`
+	SessionNamespace   NamespaceName `json:"sessionNamespace,omitempty"`
+}
+
+type ClusterCopySpec struct {
+	CopySpec             `              json:",inline"`
+	SourceNamespace      NamespaceName `json:"sourceNamespace"`
+	DestinationNamespace NamespaceName `json:"destinationNamespace"`
+	SessionNamespace     NamespaceName `json:"sessionNamespace,omitempty"`
+}
+
+type ClusterReservationSpec struct {
+	ReservationSpec      `              json:",inline"`
+	SourceNamespace      NamespaceName `json:"sourceNamespace"`
+	DestinationNamespace NamespaceName `json:"destinationNamespace"`
+	SessionNamespace     NamespaceName `json:"sessionNamespace,omitempty"`
+}
+
+type BackupSpec struct {
+	SourcePVC LocalResourceReference  `json:"sourcePVC"`
+	SourcePV  *LocalResourceReference `json:"sourcePV,omitempty"`
+	Path      string                  `json:"path,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9][A-Za-z0-9._-]*$`
+	Name                   string               `json:"name"`
+	RepositoryRef          LocalObjectReference `json:"repositoryRef"`
+	Online                 bool                 `json:"online,omitempty"`
+	OpenEBSLVMEnableShared bool                 `json:"openebsLvmEnableShared,omitempty"`
+	DeleteExtraneous       bool                 `json:"deleteExtraneous,omitempty"`
+}
+
+type RestoreSpec struct {
+	DestinationPVC LocalResourceReference `json:"destinationPVC"`
+	Path           string                 `json:"path,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9][A-Za-z0-9._-]*$`
+	Name                    string               `json:"name"`
+	RepositoryRef           LocalObjectReference `json:"repositoryRef"`
+	CreatePVC               bool                 `json:"createPVC,omitempty"`
+	DestinationStorageClass string               `json:"destinationStorageClass,omitempty"`
+	DestinationAccessMode   string               `json:"destinationAccessMode,omitempty"`
+	DestinationCapacity     string               `json:"destinationCapacity,omitempty"`
+	AllowMounted            bool                 `json:"allowMounted,omitempty"`
+	TargetNode              string               `json:"targetNode,omitempty"`
+	DeleteExtraneous        bool                 `json:"deleteExtraneous,omitempty"`
+}

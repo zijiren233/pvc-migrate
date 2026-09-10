@@ -45,15 +45,12 @@ func TestControllerRolesMatchLeastPrivilegeContract(t *testing.T) {
 	}
 }
 
-func TestControllerRoleExcludesPlannerOnlyPermissions(t *testing.T) {
+func TestControllerRoleExcludesCallerSubmissionReviews(t *testing.T) {
 	role := readClusterRole(t, "../../deploy/rbac.yaml", "pvc-migrate")
 	permissions := rolePermissions(role)
 
 	for _, forbidden := range []permissionKey{
 		{group: "authorization.k8s.io", resource: "selfsubjectaccessreviews"},
-		{group: "networking.k8s.io", resource: "networkpolicies"},
-		{group: "storage.k8s.io", resource: "csinodes"},
-		{group: "storage.k8s.io", resource: "csistoragecapacities"},
 	} {
 		if _, ok := permissions[forbidden]; ok {
 			t.Fatalf(
@@ -95,7 +92,7 @@ func TestControllerRoleKeepsMongoDBExecPermissionSeparate(t *testing.T) {
 	}
 }
 
-func TestControllerRoleScopesTransferServiceAccountReadsAndUpdates(t *testing.T) {
+func TestControllerRoleScopesTransferServiceAccountUpdates(t *testing.T) {
 	role := readClusterRole(t, "../../deploy/rbac.yaml", "pvc-migrate")
 
 	var createRule, scopedRule bool
@@ -106,9 +103,9 @@ func TestControllerRoleScopesTransferServiceAccountReadsAndUpdates(t *testing.T)
 		}
 
 		switch {
-		case reflect.DeepEqual(rule.Verbs, []string{"create"}) && len(rule.ResourceNames) == 0:
+		case reflect.DeepEqual(rule.Verbs, []string{"get", "create"}) && len(rule.ResourceNames) == 0:
 			createRule = true
-		case reflect.DeepEqual(rule.Verbs, []string{"get", "update"}) &&
+		case reflect.DeepEqual(rule.Verbs, []string{"update"}) &&
 			reflect.DeepEqual(rule.ResourceNames, []string{kube.TransferServiceAccountName}):
 			scopedRule = true
 		}
@@ -148,6 +145,9 @@ func controllerRolePermissions() map[permissionKey][]string {
 	}
 
 	add("migrate.sealos.io", []string{"backuprepositories"}, "get")
+	add("storage.k8s.io", []string{"csinodes"}, "get")
+	add("storage.k8s.io", []string{"csistoragecapacities"}, "list")
+	add("networking.k8s.io", []string{"networkpolicies"}, "list")
 
 	add("", []string{"namespaces"}, "get")
 	add("", []string{"configmaps"}, "get")

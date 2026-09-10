@@ -1,11 +1,13 @@
 package cli
 
 import (
+	v1alpha1 "github.com/labring-sigs/pvc-migrate/api/v1alpha1"
 	"github.com/labring-sigs/pvc-migrate/internal/backup"
 	"github.com/labring-sigs/pvc-migrate/internal/domain"
 	"github.com/labring-sigs/pvc-migrate/internal/kube"
 	"github.com/labring-sigs/pvc-migrate/internal/objectstore"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 )
 
 type restoreBucketFlags struct {
@@ -100,6 +102,33 @@ func (r *rootState) newRestoreTransferCommand() *cobra.Command {
 				)
 			}
 
+			if controllerWorkflow && !dryRun {
+				return r.submitRepositoryIntent(
+					ctx,
+					cmd,
+					runtime,
+					&flags.bucketFlags,
+					v1alpha1.RestoreSpec{
+						DestinationPVC: v1alpha1.LocalResourceReference{
+							Name: flags.pvc,
+						},
+						Path: flags.path,
+						Name: flags.name,
+						RepositoryRef: v1alpha1.LocalObjectReference{
+							Name: flags.backupRepository,
+						},
+						CreatePVC:               flags.restore.createPVC,
+						DestinationStorageClass: flags.restore.destinationStorageClass,
+						DestinationAccessMode:   flags.restore.destinationAccessMode,
+						DestinationCapacity:     flags.restore.destinationCapacity,
+						TargetNode:              flags.restore.targetNode,
+						AllowMounted:            flags.restore.allowMounted,
+						DeleteExtraneous:        flags.restore.deleteExtraneous,
+					},
+					domain.ControllerKindRestore,
+				)
+			}
+
 			var store *objectstore.Store
 			if flags.backupRepository != "" {
 				store, err = r.newControllerRepositoryStore(ctx, runtime, &flags.bucketFlags)
@@ -172,16 +201,6 @@ func (r *rootState) newRestoreTransferCommand() *cobra.Command {
 
 			flags.id = session.ID
 
-			if deferred, deferErr := deferControllerExecution(
-				ctx, cmd, runtime, session,
-			); deferred {
-				return deferErr
-			}
-
-			if session.Backend == kube.SessionBackendCRD {
-				return nil
-			}
-
 			if err := backup.ResumeRestore(
 				ctx,
 				runtime.clients.Kubernetes,
@@ -250,7 +269,7 @@ func bindRestoreBucketFlags(command *cobra.Command, flags *restoreBucketFlags) {
 	command.Flags().
 		StringVar(&flags.destinationStorageClass, "destination-storage-class", "", "StorageClass for a destination PVC created by restore")
 	command.Flags().
-		StringVar(&flags.destinationAccessMode, "destination-access-mode", "", "Access mode for a destination PVC created by restore")
+		StringVar(&flags.destinationAccessMode, "destination-access-mode", string(corev1.ReadWriteOnce), "Access mode for a destination PVC created by restore")
 	command.Flags().
 		StringVar(&flags.destinationCapacity, "destination-capacity", "", "Capacity for a destination PVC created by restore; defaults to the backup capacity")
 	command.Flags().

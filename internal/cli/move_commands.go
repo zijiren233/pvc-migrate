@@ -56,11 +56,12 @@ func (r *rootState) newMoveCommand() *cobra.Command {
 			ctx, cancel := r.context(cmd.Context())
 			defer cancel()
 
-			plan, err := runtime.planner.PlanMovePVC(ctx, planner.MovePlanOptions{
-				SessionID: sessionID, SourceNamespace: sourceNamespace, SourcePVC: sourcePVC,
-				DestinationNamespace: destinationNamespace, DestinationPVC: destinationPVC,
-				SessionNamespace: r.global.sessionNamespace,
-			})
+			plan, err := runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+				PlanMovePVC(ctx, planner.MovePlanOptions{
+					SessionID: sessionID, SourceNamespace: sourceNamespace, SourcePVC: sourcePVC,
+					DestinationNamespace: destinationNamespace, DestinationPVC: destinationPVC,
+					SessionNamespace: r.global.sessionNamespace,
+				})
 			if err != nil {
 				return reportPlanningError(cmd, err)
 			}

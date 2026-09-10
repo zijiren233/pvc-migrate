@@ -79,17 +79,24 @@ func clusterVolumesToDomain(
 func clusterCommonSession(
 	source, temporary, destination, sessionNamespace NamespaceName,
 	volumes []ClusterVolumeSpec,
+	sourcePVReclaimPolicy, destinationPVCReclaimPolicy string,
 ) domain.SessionCommon {
 	return domain.SessionCommon{
 		SourceNamespace:      string(source),
 		TemporaryNamespace:   string(temporary),
 		DestinationNamespace: string(destination),
 		SessionNamespace:     string(sessionNamespace),
-		Volumes:              clusterVolumesToDomain(volumes, string(source), string(temporary)),
+		Volumes: clusterVolumesToDomain(
+			volumes,
+			string(source),
+			string(temporary),
+		),
+		SourcePVReclaimPolicy:       sourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: destinationPVCReclaimPolicy,
 	}
 }
 
-func (s ClusterMigrationSpec) workflowOptions() domain.SessionWorkflowOptions {
+func (s ClusterMigrationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
 		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
@@ -101,7 +108,7 @@ func (s ClusterMigrationSpec) workflowOptions() domain.SessionWorkflowOptions {
 	}
 }
 
-func (s ClusterPodMigrationSpec) workflowOptions() domain.SessionWorkflowOptions {
+func (s ClusterPodMigrationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
 		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
@@ -113,15 +120,7 @@ func (s ClusterPodMigrationSpec) workflowOptions() domain.SessionWorkflowOptions
 	}
 }
 
-func (s ClusterReservationSpec) workflowOptions() domain.SessionWorkflowOptions {
-	return domain.SessionWorkflowOptions{
-		TargetNode:           s.TargetNode,
-		ToolImage:            s.ToolImage,
-		SkipSourceUsageCheck: s.SkipSourceUsageCheck,
-	}
-}
-
-func (s ClusterCopySpec) workflowOptions() domain.SessionWorkflowOptions {
+func (s ClusterReservationPlan) workflowOptions() domain.SessionWorkflowOptions {
 	return domain.SessionWorkflowOptions{
 		SourceNode:           s.SourceNode,
 		TargetNode:           s.TargetNode,
@@ -133,28 +132,40 @@ func (s ClusterCopySpec) workflowOptions() domain.SessionWorkflowOptions {
 	}
 }
 
-func (s ClusterMigrationSpec) Domain() domain.SessionSpec {
+func (s ClusterCopyPlan) workflowOptions() domain.SessionWorkflowOptions {
+	return domain.SessionWorkflowOptions{
+		SourceNode:           s.SourceNode,
+		TargetNode:           s.TargetNode,
+		ToolImage:            s.ToolImage,
+		Strategies:           append([]string(nil), s.Strategies...),
+		VerifyChecksum:       s.VerifyChecksum,
+		DeleteExtraneous:     s.DeleteExtraneous,
+		SkipSourceUsageCheck: s.SkipSourceUsageCheck,
+	}
+}
+
+func (s ClusterMigrationPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
 			s.TemporaryNamespace,
 			s.DestinationNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, s.SourcePVReclaimPolicy, s.DestinationPVCReclaimPolicy,
 		),
 		Type:    domain.SessionTypeMigrate,
 		Migrate: &domain.MigrateSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
 	}
 }
 
-func (s ClusterPodMigrationSpec) Domain() domain.SessionSpec {
+func (s ClusterPodMigrationPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
 			s.TemporaryNamespace,
 			s.SourceNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, s.SourcePVReclaimPolicy, s.DestinationPVCReclaimPolicy,
 		),
 		Type: domain.SessionTypeMigratePod,
 		MigratePod: &domain.MigratePodSessionSpec{
@@ -169,28 +180,28 @@ func (s ClusterPodMigrationSpec) Domain() domain.SessionSpec {
 	}
 }
 
-func (s ClusterReservationSpec) Domain() domain.SessionSpec {
+func (s ClusterReservationPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
 			s.DestinationNamespace,
 			s.DestinationNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, "", s.DestinationPVCReclaimPolicy,
 		),
 		Type:    domain.SessionTypeReserve,
 		Reserve: &domain.ReserveSessionSpec{SessionWorkflowOptions: s.workflowOptions()},
 	}
 }
 
-func (s ClusterCopySpec) Domain() domain.SessionSpec {
+func (s ClusterCopyPlan) Domain() domain.SessionSpec {
 	return domain.SessionSpec{
 		SessionCommon: clusterCommonSession(
 			s.SourceNamespace,
 			s.DestinationNamespace,
 			s.DestinationNamespace,
 			s.SessionNamespace,
-			s.Volumes,
+			s.Volumes, "", s.DestinationPVCReclaimPolicy,
 		),
 		Type: domain.SessionTypeCopy,
 		Copy: &domain.CopySessionSpec{
@@ -200,7 +211,7 @@ func (s ClusterCopySpec) Domain() domain.SessionSpec {
 	}
 }
 
-func (s MoveSpec) Domain() domain.SessionSpec {
+func (s MovePlan) Domain() domain.SessionSpec {
 	return identitySessionSpec(
 		domain.SessionTypeMove,
 		string(s.SourceNamespace),
@@ -213,83 +224,93 @@ func (s MoveSpec) Domain() domain.SessionSpec {
 	)
 }
 
-func ClusterMigrationSpecFromDomain(s domain.SessionSpec) ClusterMigrationSpec {
+func ClusterMigrationPlanFromDomain(s domain.SessionSpec) ClusterMigrationPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterMigrationSpec{
-		SourceNamespace:      NamespaceName(s.SourceNamespace),
-		TemporaryNamespace:   NamespaceName(s.TemporaryNamespace),
-		DestinationNamespace: NamespaceName(s.DestinationNamespace),
-		SessionNamespace:     NamespaceName(s.SessionNamespace),
-		Volumes:              clusterVolumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
+	return ClusterMigrationPlan{
+		SourcePVReclaimPolicy:       s.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		TemporaryNamespace:          NamespaceName(s.TemporaryNamespace),
+		DestinationNamespace:        NamespaceName(s.DestinationNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
 	}
 }
 
-func ClusterPodMigrationSpecFromDomain(s domain.SessionSpec) ClusterPodMigrationSpec {
+func ClusterPodMigrationPlanFromDomain(s domain.SessionSpec) ClusterPodMigrationPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterPodMigrationSpec{
-		SourceNamespace:        NamespaceName(s.SourceNamespace),
-		TemporaryNamespace:     NamespaceName(s.TemporaryNamespace),
-		SessionNamespace:       NamespaceName(s.SessionNamespace),
-		Volumes:                clusterVolumesFromDomain(s.Volumes),
-		SourceNode:             options.SourceNode,
-		TargetNode:             options.TargetNode,
-		ToolImage:              options.ToolImage,
-		Strategies:             append([]string(nil), options.Strategies...),
-		VerifyChecksum:         options.VerifyChecksum,
-		DeleteExtraneous:       options.DeleteExtraneous,
-		SkipSourceUsageCheck:   options.SkipSourceUsageCheck,
-		Workload:               ClusterWorkloadSpec(workloadFromDomain(s.Workload())),
-		PrecopyPasses:          s.PrecopyPasses(),
-		OpenEBSLVMEnableShared: s.OpenEBSLVMSharedMountEnabled(),
+	return ClusterPodMigrationPlan{
+		SourcePVReclaimPolicy:       s.SourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		TemporaryNamespace:          NamespaceName(s.TemporaryNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
+		Workload:                    ClusterWorkloadSpec(workloadFromDomain(s.Workload())),
+		PrecopyPasses:               s.PrecopyPasses(),
+		OpenEBSLVMEnableShared:      s.OpenEBSLVMSharedMountEnabled(),
 	}
 }
 
-func ClusterReservationSpecFromDomain(s domain.SessionSpec) ClusterReservationSpec {
+func ClusterReservationPlanFromDomain(s domain.SessionSpec) ClusterReservationPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterReservationSpec{
-		SourceNamespace:      NamespaceName(s.SourceNamespace),
-		DestinationNamespace: NamespaceName(s.TemporaryNamespace),
-		SessionNamespace:     NamespaceName(s.SessionNamespace),
-		Volumes:              clusterVolumesFromDomain(s.Volumes),
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
+	return ClusterReservationPlan{
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		DestinationNamespace:        NamespaceName(s.TemporaryNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
 	}
 }
 
-func ClusterCopySpecFromDomain(s domain.SessionSpec) ClusterCopySpec {
+func ClusterCopyPlanFromDomain(s domain.SessionSpec) ClusterCopyPlan {
 	options := s.WorkflowOptions()
 
-	return ClusterCopySpec{
-		SourceNamespace:      NamespaceName(s.SourceNamespace),
-		DestinationNamespace: NamespaceName(s.TemporaryNamespace),
-		SessionNamespace:     NamespaceName(s.SessionNamespace),
-		Volumes:              clusterVolumesFromDomain(s.Volumes),
-		SourceNode:           options.SourceNode,
-		TargetNode:           options.TargetNode,
-		ToolImage:            options.ToolImage,
-		Strategies:           append([]string(nil), options.Strategies...),
-		VerifyChecksum:       options.VerifyChecksum,
-		DeleteExtraneous:     options.DeleteExtraneous,
-		SkipSourceUsageCheck: options.SkipSourceUsageCheck,
-		Online:               s.Online(),
+	return ClusterCopyPlan{
+		DestinationPVCReclaimPolicy: s.DestinationPVCReclaimPolicy,
+		SourceNamespace:             NamespaceName(s.SourceNamespace),
+		DestinationNamespace:        NamespaceName(s.TemporaryNamespace),
+		SessionNamespace:            NamespaceName(s.SessionNamespace),
+		Volumes:                     clusterVolumesFromDomain(s.Volumes),
+		SourceNode:                  options.SourceNode,
+		TargetNode:                  options.TargetNode,
+		ToolImage:                   options.ToolImage,
+		Strategies:                  append([]string(nil), options.Strategies...),
+		VerifyChecksum:              options.VerifyChecksum,
+		DeleteExtraneous:            options.DeleteExtraneous,
+		SkipSourceUsageCheck:        options.SkipSourceUsageCheck,
+		Online:                      s.Online(),
 	}
 }
 
-func MoveSpecFromDomain(s domain.SessionSpec) MoveSpec {
+func MovePlanFromDomain(s domain.SessionSpec) MovePlan {
 	volume := firstVolume(s.Volumes)
 
-	return MoveSpec{
+	return MovePlan{
 		SourceNamespace:      NamespaceName(s.SourceNamespace),
 		DestinationNamespace: NamespaceName(s.DestinationNamespace),
 		SessionNamespace:     NamespaceName(s.SessionNamespace),

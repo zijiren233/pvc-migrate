@@ -216,7 +216,7 @@ func (r *rootState) newOfflineMigrationCleanupCommand() *cobra.Command {
 
 	command := &cobra.Command{
 		Use:   "cleanup SESSION",
-		Short: "Delete retained offline migration resources or close its rollback window",
+		Short: "Apply storage reclaim policies and close the offline migration rollback window",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runtime, err := r.runtime()
@@ -245,17 +245,14 @@ func (r *rootState) newOfflineMigrationCleanupCommand() *cobra.Command {
 					session,
 					options,
 				); err != nil {
-					return reportSessionError(cmd, session, err)
+					return reportCleanupError(cmd, session, options, err)
 				}
 
-				return printSessionResult(cmd, runtime, session)
+				return printCleanupResult(cmd, runtime, session, options, true)
 			}
 
-			if options.DeleteTemporary || options.DeleteRollback || options.Finalize ||
-				options.DeleteSession {
-				if err := r.confirm(ctx, cmd, args[0]); err != nil {
-					return reportApprovalError(cmd, err)
-				}
+			if err := r.confirm(ctx, cmd, args[0]); err != nil {
+				return reportApprovalError(cmd, err)
 			}
 
 			if err := runtime.service.CleanupOfflineMigration(ctx, session, options); err != nil {
@@ -266,7 +263,7 @@ func (r *rootState) newOfflineMigrationCleanupCommand() *cobra.Command {
 				return printDeletedSession(cmd, session)
 			}
 
-			return printSessionResult(cmd, runtime, session)
+			return printCleanupResult(cmd, runtime, session, options, false)
 		},
 	}
 	bindCleanupFlags(command, &options)

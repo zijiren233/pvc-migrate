@@ -177,9 +177,7 @@ func TestCRDSessionStoreRoundTripAndStatusUpdate(t *testing.T) {
 
 	session := storeTestSession()
 
-	if err := store.Create(ctx, session); err != nil {
-		t.Fatal(err)
-	}
+	createPlannedTestWorkflow(t, ctx, store, session)
 
 	if session.Backend != SessionBackendCRD {
 		t.Fatalf("create metadata backend=%q", session.Backend)
@@ -224,9 +222,7 @@ func TestCRDSessionStoreUpdatesSameNamespaceClusterWorkflow(t *testing.T) {
 	)
 	session.BackendResource = domain.ControllerKindClusterCopy
 
-	if err := store.Create(ctx, session); err != nil {
-		t.Fatal(err)
-	}
+	createPlannedTestWorkflow(t, ctx, store, session)
 
 	if err := session.Transition(domain.PhaseReserving, "reserving", time.Now()); err != nil {
 		t.Fatal(err)
@@ -530,9 +526,7 @@ func TestCRDSessionStorePersistsCurrentPodIdentityOnlyInStatus(t *testing.T) {
 	)
 	session := domain.NewSession(base.ID, spec, time.Now())
 
-	if err := store.Create(ctx, session); err != nil {
-		t.Fatal(err)
-	}
+	createPlannedTestWorkflow(t, ctx, store, session)
 
 	workload := session.Spec.WorkloadPtr()
 	workload.Pod.UID = "resumed-pod-uid"
@@ -556,7 +550,8 @@ func TestCRDSessionStorePersistsCurrentPodIdentityOnlyInStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if object.Spec.Workload.Pod.UID != "original-pod-uid" || object.Status.Workload == nil ||
+	if object.Spec.Pod.UID != "original-pod-uid" || object.Status.Plan == nil ||
+		object.Status.Plan.Workload.Pod.UID != "original-pod-uid" || object.Status.Workload == nil ||
 		object.Status.Workload.Pod.UID != "resumed-pod-uid" {
 		t.Fatalf(
 			"unexpected PodMigration spec/status workload: %#v %#v",
@@ -1164,9 +1159,7 @@ func TestCRDSessionStorePreservesWorkflowMetadata(t *testing.T) {
 	store := NewCRDSessionStore(client)
 	session := storeTestSession()
 
-	if err := store.Create(ctx, session); err != nil {
-		t.Fatal(err)
-	}
+	createPlannedTestWorkflow(t, ctx, store, session)
 
 	workflow := &v1alpha1.Migration{}
 	if err := client.Get(
@@ -1257,9 +1250,8 @@ func TestCRDSessionStoreRebindsReservationToCopy(t *testing.T) {
 		SourceNamespace: "system", TemporaryNamespace: "system", DestinationNamespace: "system",
 		SessionNamespace: "system", Volumes: session.Spec.Volumes,
 	}, false, domain.SessionWorkflowOptions{})
-	if err := store.Create(ctx, session); err != nil {
-		t.Fatal(err)
-	}
+	createPlannedTestWorkflow(t, ctx, store, session)
+	session.Intent = []byte(`{"volumes":[{"sourcePVC":{"name":"data"}}]}`)
 
 	session.Spec = domain.NewSessionSpec(domain.OperationCopy, domain.SessionCommon{
 		SourceNamespace: "system", TemporaryNamespace: "system", DestinationNamespace: "system",
@@ -1280,6 +1272,11 @@ func TestCRDSessionStoreRebindsReservationToCopy(t *testing.T) {
 	loaded, err := store.Get(ctx, "system", session.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if loaded.Status.ExecutionIntentHash == "" ||
+		loaded.Status.ExecutionIntentHash != domain.ExecutionIntentHash(loaded.Intent) {
+		t.Fatalf("rebind fingerprint does not match Copy intent: %s", loaded.Intent)
 	}
 
 	if loaded.BackendResource != "Copy" || loaded.Spec.Type != domain.SessionTypeCopy ||
@@ -1337,9 +1334,7 @@ func TestCRDSessionStoreRebindsClusterReservationToClusterCopy(t *testing.T) {
 		false,
 		domain.SessionWorkflowOptions{},
 	)
-	if err := store.Create(ctx, session); err != nil {
-		t.Fatal(err)
-	}
+	createPlannedTestWorkflow(t, ctx, store, session)
 
 	session.Spec = domain.NewSessionSpec(
 		domain.OperationCopy,
@@ -1425,9 +1420,7 @@ func TestCRDSessionStoreRebindRollbackRemovesTargetFinalizer(t *testing.T) {
 		SessionNamespace: "system", Volumes: session.Spec.Volumes,
 	}, false, domain.SessionWorkflowOptions{})
 
-	if err := store.Create(ctx, session); err != nil {
-		t.Fatal(err)
-	}
+	createPlannedTestWorkflow(t, ctx, store, session)
 
 	if err := session.Transition(domain.PhaseReserving, "reserving", time.Now()); err != nil {
 		t.Fatal(err)

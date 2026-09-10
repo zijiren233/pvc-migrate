@@ -1010,7 +1010,7 @@ func (s *Service) cleanupPreActivationOrphan(
 	}
 
 	if resources.DestinationPV.Name != "" {
-		if err := s.deleteRollbackPV(
+		if err := s.deleteReclaimedPV(
 			ctx,
 			sessionID,
 			resources.DestinationPV,

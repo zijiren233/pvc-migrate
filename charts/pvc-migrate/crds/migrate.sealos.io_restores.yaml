@@ -95,9 +95,8 @@ spec:
               path:
                 type: string
               repositoryRef:
-                description: |-
-                  RepositoryRef selects a user-owned BackupRepository in this workflow
-                  namespace. The referenced object owns the complete backup location.
+                description: LocalObjectReference identifies a resource in the same
+                  namespace.
                 properties:
                   name:
                     maxLength: 253
@@ -108,8 +107,6 @@ spec:
                 - name
                 type: object
               targetNode:
-                type: string
-              toolImage:
                 type: string
             required:
             - destinationPVC
@@ -217,6 +214,8 @@ spec:
                 - timeout
                 - internal
                 type: string
+              executionIntentHash:
+                type: string
               failureReason:
                 maxLength: 8192
                 type: string
@@ -289,6 +288,78 @@ spec:
                 - Moving
                 - Failed
                 type: string
+              plan:
+                properties:
+                  allowMounted:
+                    type: boolean
+                  createPVC:
+                    type: boolean
+                  deleteExtraneous:
+                    type: boolean
+                  destinationAccessMode:
+                    type: string
+                  destinationCapacity:
+                    type: string
+                  destinationPVC:
+                    description: |-
+                      LocalResourceReference identifies a resource whose namespace is established
+                      by the containing workflow, or a cluster-scoped resource such as a PV.
+                      Namespaced workflow APIs derive their boundary from metadata.namespace.
+                    properties:
+                      apiVersion:
+                        maxLength: 253
+                        type: string
+                      kind:
+                        maxLength: 253
+                        type: string
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                      resourceVersion:
+                        maxLength: 256
+                        type: string
+                      uid:
+                        description: |-
+                          UID is a type that holds unique ID values, including UUIDs.  Because we
+                          don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                          intent and helps make sure that UIDs and names do not get conflated.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  destinationStorageClass:
+                    type: string
+                  name:
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[A-Za-z0-9][A-Za-z0-9._-]*$
+                    type: string
+                  path:
+                    type: string
+                  repositoryRef:
+                    description: |-
+                      RepositoryRef selects a user-owned BackupRepository in this workflow
+                      namespace. The referenced object owns the complete backup location.
+                    properties:
+                      name:
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  targetNode:
+                    type: string
+                  toolImage:
+                    type: string
+                required:
+                - destinationPVC
+                - name
+                - repositoryRef
+                type: object
               repository:
                 properties:
                   generation:

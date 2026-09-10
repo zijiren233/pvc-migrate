@@ -73,20 +73,21 @@ type VolumeSpec struct {
 }
 
 type Spec struct {
-	SessionNamespace     string               `json:"sessionNamespace"               yaml:"sessionNamespace"`
-	SourceCluster        kube.ClusterIdentity `json:"sourceCluster"                  yaml:"sourceCluster"`
-	DestinationCluster   kube.ClusterIdentity `json:"destinationCluster"             yaml:"destinationCluster"`
-	SourceNamespace      string               `json:"sourceNamespace"                yaml:"sourceNamespace"`
-	DestinationNamespace string               `json:"destinationNamespace"           yaml:"destinationNamespace"`
-	ToolImage            string               `json:"toolImage"                      yaml:"toolImage"`
-	Strategies           []string             `json:"strategies"                     yaml:"strategies"`
-	Online               bool                 `json:"online,omitempty"               yaml:"online,omitempty"`
-	VerifyChecksum       bool                 `json:"verifyChecksum"                 yaml:"verifyChecksum"`
-	DeleteExtraneous     bool                 `json:"deleteExtraneous"               yaml:"deleteExtraneous"`
-	AllowVolumeShrink    bool                 `json:"allowVolumeShrink,omitempty"    yaml:"allowVolumeShrink,omitempty"`
-	SkipSourceUsageCheck bool                 `json:"skipSourceUsageCheck,omitempty" yaml:"skipSourceUsageCheck,omitempty"`
-	TargetNode           string               `json:"targetNode,omitempty"           yaml:"targetNode,omitempty"`
-	Volumes              []VolumeSpec         `json:"volumes"                        yaml:"volumes"`
+	DestinationPVCReclaimPolicy string               `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
+	SessionNamespace            string               `json:"sessionNamespace"                      yaml:"sessionNamespace"`
+	SourceCluster               kube.ClusterIdentity `json:"sourceCluster"                         yaml:"sourceCluster"`
+	DestinationCluster          kube.ClusterIdentity `json:"destinationCluster"                    yaml:"destinationCluster"`
+	SourceNamespace             string               `json:"sourceNamespace"                       yaml:"sourceNamespace"`
+	DestinationNamespace        string               `json:"destinationNamespace"                  yaml:"destinationNamespace"`
+	ToolImage                   string               `json:"toolImage"                             yaml:"toolImage"`
+	Strategies                  []string             `json:"strategies"                            yaml:"strategies"`
+	Online                      bool                 `json:"online,omitempty"                      yaml:"online,omitempty"`
+	VerifyChecksum              bool                 `json:"verifyChecksum"                        yaml:"verifyChecksum"`
+	DeleteExtraneous            bool                 `json:"deleteExtraneous"                      yaml:"deleteExtraneous"`
+	AllowVolumeShrink           bool                 `json:"allowVolumeShrink,omitempty"           yaml:"allowVolumeShrink,omitempty"`
+	SkipSourceUsageCheck        bool                 `json:"skipSourceUsageCheck,omitempty"        yaml:"skipSourceUsageCheck,omitempty"`
+	TargetNode                  string               `json:"targetNode,omitempty"                  yaml:"targetNode,omitempty"`
+	Volumes                     []VolumeSpec         `json:"volumes"                               yaml:"volumes"`
 }
 
 type ReservationStatus struct {
@@ -172,6 +173,10 @@ func (p *Plan) AddCheck(name domain.CheckName, passed bool, message string) {
 
 func (s *Session) Validate() error {
 	if err := validateCrossClusterHeader(s); err != nil {
+		return err
+	}
+
+	if err := domain.ValidateReclaimPolicies("", s.Spec.DestinationPVCReclaimPolicy); err != nil {
 		return err
 	}
 

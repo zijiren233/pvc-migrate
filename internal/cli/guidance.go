@@ -74,24 +74,30 @@ func writeSessionGuidance(w io.Writer, session *domain.Session, prefixes guidanc
 		return err
 	}
 
+	if err := writeReclaimGuidance(w, session); err != nil {
+		return err
+	}
+
 	return writeSessionPhaseGuidance(w, session, commands)
 }
 
 type sessionGuidanceCommands struct {
-	prefix       string
-	status       string
-	resumePlan   string
-	resume       string
-	cleanupPlan  string
-	cleanup      string
-	keepCopyPlan string
-	keepCopy     string
-	copyPlan     string
-	copyCommand  string
-	rollbackPlan string
-	rollback     string
-	abortPlan    string
-	abort        string
+	prefix          string
+	status          string
+	resumePlan      string
+	resume          string
+	cleanupPlan     string
+	cleanup         string
+	keepCopyPlan    string
+	keepCopy        string
+	discardCopyPlan string
+	discardCopy     string
+	copyPlan        string
+	copyCommand     string
+	rollbackPlan    string
+	rollback        string
+	abortPlan       string
+	abort           string
 }
 
 func buildSessionGuidanceCommands(
@@ -118,13 +124,25 @@ func buildSessionGuidanceCommands(
 			cleanupCommandArgs(session),
 		),
 		keepCopyPlan: fmt.Sprintf(
-			"%s %s cleanup %s --finalize --delete-session --dry-run",
+			"%s %s cleanup %s --destination-pvc-reclaim-policy Retain --finalize --delete-session --dry-run",
 			prefix,
 			workflow,
 			session.ID,
 		),
 		keepCopy: fmt.Sprintf(
-			"%s --yes %s cleanup %s --finalize --delete-session --dry-run=false",
+			"%s --yes %s cleanup %s --destination-pvc-reclaim-policy Retain --finalize --delete-session --dry-run=false",
+			prefix,
+			workflow,
+			session.ID,
+		),
+		discardCopyPlan: fmt.Sprintf(
+			"%s %s cleanup %s --destination-pvc-reclaim-policy Delete --finalize --delete-session --dry-run",
+			prefix,
+			workflow,
+			session.ID,
+		),
+		discardCopy: fmt.Sprintf(
+			"%s --yes %s cleanup %s --destination-pvc-reclaim-policy Delete --finalize --delete-session --dry-run=false",
 			prefix,
 			workflow,
 			session.ID,
@@ -333,8 +351,8 @@ func writeCopiedSessionGuidance(w io.Writer, commands sessionGuidanceCommands) e
 	lines := [][2]string{
 		{"  Keep the copied PVC and close session (validate first):", commands.keepCopyPlan},
 		{"  Keep the copied PVC and close session:", commands.keepCopy},
-		{"  Discard the copied PVC and close session (validate first):", commands.cleanupPlan},
-		{"  Discard the copied PVC and close session:", commands.cleanup},
+		{"  Discard the copied PVC and close session (validate first):", commands.discardCopyPlan},
+		{"  Discard the copied PVC and close session:", commands.discardCopy},
 	}
 
 	return writeGuidanceLines(w, lines)
@@ -443,7 +461,7 @@ func writeCompletedSessionGuidance(w io.Writer, commands sessionGuidanceCommands
 		{"  Validate rollback:", commands.rollbackPlan},
 		{"  Roll back:", commands.rollback},
 		{"  Validate cleanup:", commands.cleanupPlan},
-		{"  Finalize and delete retained resources/session:", commands.cleanup},
+		{"  Apply reclaim policies and delete session:", commands.cleanup},
 	}
 
 	return writeGuidanceLines(w, lines)
@@ -453,7 +471,7 @@ func writeCompletedBackupSessionGuidance(w io.Writer, commands sessionGuidanceCo
 	lines := [][2]string{
 		{"  Verify the published recovery point before deleting session credentials.", ""},
 		{"  Validate cleanup:", commands.cleanupPlan},
-		{"  Finalize and delete retained resources/session:", commands.cleanup},
+		{"  Finalize and delete session/credentials:", commands.cleanup},
 	}
 
 	return writeGuidanceLines(w, lines)
@@ -471,9 +489,9 @@ func writeCompletedRestoreSessionGuidance(w io.Writer, commands sessionGuidanceC
 
 func writeClosedSessionGuidance(w io.Writer, commands sessionGuidanceCommands) error {
 	lines := [][2]string{
-		{"  Verify workload and PVC state before deleting retained resources.", ""},
+		{"  Verify workload and PVC state before applying reclaim policies.", ""},
 		{"  Validate cleanup:", commands.cleanupPlan},
-		{"  Finalize and delete retained resources/session:", commands.cleanup},
+		{"  Apply reclaim policies and delete session:", commands.cleanup},
 	}
 
 	return writeGuidanceLines(w, lines)
@@ -537,16 +555,87 @@ func phaseCanAbortBeforeActivation(session *domain.Session) bool {
 }
 
 func cleanupCommandArgs(session *domain.Session) string {
-	args := []string{workflowCommandName(session), "cleanup", session.ID}
-	if session.Spec.Type != domain.SessionTypeBackup &&
-		session.Spec.Type != domain.SessionTypeRestore &&
-		!session.Spec.Operation().RebindsPVC() {
-		args = append(args, "--delete-temporary", "--delete-rollback-pv")
+	options := app.CleanupOptions{Finalize: true, DeleteSession: true}
+	if session.Status.FailureReason == domain.FailureDestinationCapacityExhausted ||
+		sessionHasCapacityFailure(session) {
+		options.DestinationPVCReclaimPolicy = "Delete"
 	}
 
-	args = append(args, "--finalize", "--delete-session")
+	return cleanupCommandArgsForSessionOptions(session, options)
+}
 
-	return strings.Join(args, " ")
+// Recommendations include explicit overrides for source protection and
+// destination capacity recovery; printing guidance never changes the record.
+func cleanupGuidancePolicies(session *domain.Session) (source, destination string) {
+	options := cleanupGuidanceOptions(session, app.CleanupOptions{})
+
+	source, destination = options.SourcePVReclaimPolicy, options.DestinationPVCReclaimPolicy
+	if source == "" {
+		source = "Retain"
+	}
+
+	if session.Status.FailureReason == domain.FailureDestinationCapacityExhausted ||
+		sessionHasCapacityFailure(session) {
+		destination = "Delete"
+	}
+
+	return source, destination
+}
+
+func cleanupGuidanceKeepsSource(session *domain.Session) bool {
+	return session.Spec.Operation() == domain.OperationCopy ||
+		session.Spec.Operation() == domain.OperationReserve
+}
+
+func writeReclaimGuidance(w io.Writer, session *domain.Session) error {
+	if session.Spec.Operation().RebindsPVC() || session.Spec.Type == domain.SessionTypeBackup ||
+		session.Spec.Type == domain.SessionTypeRestore || len(session.Spec.Volumes) == 0 {
+		return nil
+	}
+
+	if session.Status.Phase != domain.PhaseCompleted &&
+		session.Status.Phase != domain.PhaseRolledBack &&
+		session.Status.Phase != domain.PhaseAborted &&
+		session.Status.Phase != domain.PhaseWarmCopied &&
+		session.Status.Phase != domain.PhaseReserved {
+		return nil
+	}
+
+	source, destination := cleanupGuidancePolicies(session)
+	if session.Spec.SourcePVReclaimPolicy == "Delete" && source == "Retain" {
+		if _, err := fmt.Fprintln(
+			w,
+			"  Cleanup overrides the recorded source policy Delete with Retain: only a completed migration has an inactive source PV to delete; rollback restores and protects the source.",
+		); err != nil {
+			return err
+		}
+	}
+
+	if destination == "Delete" && session.Spec.DestinationPVCReclaimPolicy != "Delete" {
+		if _, err := fmt.Fprintln(
+			w,
+			"  Capacity recovery recommends destination Delete, overriding the recorded retention policy. This discards destination data; inspect the dry-run before executing.",
+		); err != nil {
+			return err
+		}
+	}
+
+	for _, v := range session.Spec.Volumes {
+		if session.Status.Phase == domain.PhaseCompleted && !cleanupGuidanceKeepsSource(session) {
+			if _, err := fmt.Fprintf(
+				w,
+				"  Cleanup identities: inactive source PV %s (--source-pv-reclaim-policy); active destination PV %s (--destination-pvc-reclaim-policy). Deleting destination storage requires no consumers.\n",
+				v.SourcePV.Name,
+				v.DestinationPV.Name,
+			); err != nil {
+				return err
+			}
+		} else if _, err := fmt.Fprintf(w, "  Cleanup identities: source PV %s remains active and protected; destination PV %s is controlled by --destination-pvc-reclaim-policy.\n", v.SourcePV.Name, v.DestinationPV.Name); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func writeSessionInspection(w io.Writer, session *domain.Session, kubectlPrefix string) error {
@@ -694,6 +783,61 @@ func printSessionResult(cmd interface {
 	)
 }
 
+func printCleanupResult(cmd interface {
+	OutOrStdout() io.Writer
+	ErrOrStderr() io.Writer
+}, runtime *commandRuntime, session *domain.Session, options app.CleanupOptions, dryRun bool,
+) error {
+	if err := runtime.printer.Print(session); err != nil {
+		return reportCleanupError(cmd, session, options, err)
+	}
+
+	prefixes := guidancePrefixesForCommand(cmd, session.Spec.SessionNamespace)
+	w := cmd.ErrOrStderr()
+
+	resolved := cleanupGuidanceOptions(session, options)
+	if _, err := fmt.Fprintf(
+		w,
+		"\nCleanup policies for this invocation: source=%s, destination=%s. Stored policies are unchanged.\n",
+		cleanupPolicyLabel(resolved.SourcePVReclaimPolicy),
+		cleanupPolicyLabel(resolved.DestinationPVCReclaimPolicy),
+	); err != nil {
+		return err
+	}
+
+	if err := writeSessionInspection(w, session, prefixes.kubectl); err != nil {
+		return err
+	}
+
+	if dryRun {
+		_, err := fmt.Fprintf(
+			w,
+			"Apply validated cleanup: %s --yes %s --dry-run=false\n",
+			prefixes.pvcMigrate,
+			cleanupCommandArgsForSessionOptions(session, options),
+		)
+
+		return err
+	}
+
+	_, err := fmt.Fprintf(
+		w,
+		"Cleanup completed. Inspect the remaining session: %s %s status %s\n",
+		prefixes.pvcMigrate,
+		workflowCommandName(session),
+		session.ID,
+	)
+
+	return err
+}
+
+func cleanupPolicyLabel(policy string) string {
+	if policy == "" {
+		return "not applicable"
+	}
+	return policy
+}
+
 func reportSessionError(
 	cmd interface{ ErrOrStderr() io.Writer },
 	session *domain.Session,
@@ -822,9 +966,17 @@ func writeCapacityFailureGuidance(
 
 	abortPlan := fmt.Sprintf("%s %s abort %s --dry-run", prefix, workflow, session.ID)
 	abort := fmt.Sprintf("%s --yes %s abort %s --dry-run=false", prefix, workflow, session.ID)
-	cleanupPlan := fmt.Sprintf("%s %s --dry-run", prefix, cleanupCommandArgs(session))
+	cleanupArgs := cleanupCommandArgsForSessionOptions(
+		session,
+		app.CleanupOptions{
+			DestinationPVCReclaimPolicy: "Delete",
+			Finalize:                    true,
+			DeleteSession:               true,
+		},
+	)
+	cleanupPlan := fmt.Sprintf("%s %s --dry-run", prefix, cleanupArgs)
 
-	cleanup := fmt.Sprintf("%s --yes %s --dry-run=false", prefix, cleanupCommandArgs(session))
+	cleanup := fmt.Sprintf("%s --yes %s --dry-run=false", prefix, cleanupArgs)
 	for _, step := range []struct {
 		label   string
 		command string
@@ -1095,6 +1247,14 @@ func reportCleanupError(
 
 	if session != nil {
 		prefix := guidancePrefixesForCommand(cmd, session.Spec.SessionNamespace).pvcMigrate
+		if !cleanupGuidanceKeepsSource(session) && session.Status.Phase != domain.PhaseCompleted &&
+			(options.SourcePVReclaimPolicy == "Delete" || session.Spec.SourcePVReclaimPolicy == "Delete") {
+			_, _ = fmt.Fprintln(
+				cmd.ErrOrStderr(),
+				"The retry command uses source Retain: deleting the source is only allowed after a completed migration, never after rollback.",
+			)
+		}
+
 		_, _ = fmt.Fprintf(
 			cmd.ErrOrStderr(),
 			"\nCleanup stopped before confirmed completion. Inspect current state: %s %s status %s\n",
@@ -1123,10 +1283,9 @@ func writeWarmCopyMountGuidance(w io.Writer, command any, session *domain.Sessio
 	prefixes := guidancePrefixesForCommand(command, session.Spec.SessionNamespace)
 	abortArgs := workflowCommandName(session) + " abort " + session.ID
 	cleanupArgs := cleanupCommandArgsForSessionOptions(session, app.CleanupOptions{
-		DeleteTemporary: true,
-		DeleteRollback:  true,
-		Finalize:        true,
-		DeleteSession:   true,
+		DestinationPVCReclaimPolicy: "Delete",
+		Finalize:                    true,
+		DeleteSession:               true,
 	})
 
 	if _, err := fmt.Fprintln(
@@ -1319,19 +1478,54 @@ func cleanupCommandArgsForSessionOptions(
 	if session != nil {
 		workflow = workflowCommandName(session)
 		id = session.ID
+		options = cleanupGuidanceOptions(session, options)
 	}
 
 	return cleanupCommandArgsForWorkflow(workflow, id, options)
 }
 
-func cleanupCommandArgsForWorkflow(workflow, id string, options app.CleanupOptions) string {
-	args := []string{workflow, "cleanup", id}
-	if options.DeleteTemporary {
-		args = append(args, "--delete-temporary")
+func cleanupGuidanceOptions(
+	session *domain.Session,
+	options app.CleanupOptions,
+) app.CleanupOptions {
+	if session.Spec.Type == domain.SessionTypeBackup ||
+		session.Spec.Type == domain.SessionTypeRestore ||
+		session.Spec.Operation().RebindsPVC() {
+		options.SourcePVReclaimPolicy, options.DestinationPVCReclaimPolicy = "", ""
+		return options
 	}
 
-	if options.DeleteRollback {
-		args = append(args, "--delete-rollback-pv")
+	if options.DestinationPVCReclaimPolicy == "" {
+		options.DestinationPVCReclaimPolicy = session.Spec.DestinationPVCReclaimPolicy
+	}
+
+	if options.DestinationPVCReclaimPolicy == "" {
+		options.DestinationPVCReclaimPolicy = "Retain"
+	}
+
+	if options.SourcePVReclaimPolicy == "" {
+		options.SourcePVReclaimPolicy = session.Spec.SourcePVReclaimPolicy
+	}
+
+	if options.SourcePVReclaimPolicy == "" || session.Status.Phase != domain.PhaseCompleted {
+		options.SourcePVReclaimPolicy = "Retain"
+	}
+
+	if cleanupGuidanceKeepsSource(session) {
+		options.SourcePVReclaimPolicy = ""
+	}
+
+	return options
+}
+
+func cleanupCommandArgsForWorkflow(workflow, id string, options app.CleanupOptions) string {
+	args := []string{workflow, "cleanup", id}
+	if options.SourcePVReclaimPolicy != "" {
+		args = append(args, "--source-pv-reclaim-policy", options.SourcePVReclaimPolicy)
+	}
+
+	if options.DestinationPVCReclaimPolicy != "" {
+		args = append(args, "--destination-pvc-reclaim-policy", options.DestinationPVCReclaimPolicy)
 	}
 
 	if options.Finalize {

@@ -496,7 +496,18 @@ type SessionCommon struct {
 	DestinationNamespace string       `json:"destinationNamespace" yaml:"destinationNamespace"`
 	SessionNamespace     string       `json:"sessionNamespace"     yaml:"sessionNamespace"`
 	Volumes              []VolumeSpec `json:"volumes,omitempty"    yaml:"volumes,omitempty"`
+	// SourcePVReclaimPolicy controls the old/source PV after a completed
+	// migration. Empty is treated as Retain for controller-owned deletion.
+	SourcePVReclaimPolicy       string `json:"sourcePVReclaimPolicy,omitempty"       yaml:"sourcePVReclaimPolicy,omitempty"`
+	DestinationPVCReclaimPolicy string `json:"destinationPVCReclaimPolicy,omitempty" yaml:"destinationPVCReclaimPolicy,omitempty"`
 }
+
+const (
+	SourcePVReclaimRetain       = "Retain"
+	SourcePVReclaimDelete       = "Delete"
+	DestinationPVCReclaimRetain = "Retain"
+	DestinationPVCReclaimDelete = "Delete"
+)
 
 type SessionWorkflowOptions struct {
 	SourceNode     string   `json:"sourceNode,omitempty"     yaml:"sourceNode,omitempty"`
@@ -994,11 +1005,12 @@ type BackupRepositoryBindingStatus struct {
 }
 
 type SessionStatus struct {
-	Phase               Phase                `json:"phase"                   yaml:"phase"`
-	ResumeFrom          Phase                `json:"resumeFrom,omitempty"    yaml:"resumeFrom,omitempty"`
-	FailureReason       SessionFailureReason `json:"failureReason,omitempty" yaml:"failureReason,omitempty"`
-	ErrorCategory       ErrorCategory        `json:"errorCategory,omitempty" yaml:"errorCategory,omitempty"`
-	WarmPassesCompleted int                  `json:"warmPassesCompleted"     yaml:"warmPassesCompleted"`
+	ExecutionIntentHash string               `json:"executionIntentHash,omitempty" yaml:"executionIntentHash,omitempty"`
+	Phase               Phase                `json:"phase"                         yaml:"phase"`
+	ResumeFrom          Phase                `json:"resumeFrom,omitempty"          yaml:"resumeFrom,omitempty"`
+	FailureReason       SessionFailureReason `json:"failureReason,omitempty"       yaml:"failureReason,omitempty"`
+	ErrorCategory       ErrorCategory        `json:"errorCategory,omitempty"       yaml:"errorCategory,omitempty"`
+	WarmPassesCompleted int                  `json:"warmPassesCompleted"           yaml:"warmPassesCompleted"`
 	// OriginalPodSnapshotHash records the controller-captured standalone Pod
 	// snapshot used for a later workload resume. It is populated only for
 	// controller-backed PodMigration workflows.
@@ -1016,11 +1028,14 @@ type SessionStatus struct {
 }
 
 type Session struct {
-	APIVersion      string `json:"apiVersion" yaml:"apiVersion"`
-	Kind            string `json:"kind"       yaml:"kind"`
-	ID              string `json:"id"         yaml:"id"`
-	Generation      int64  `json:"generation" yaml:"generation"`
-	ResourceVersion string `json:"-"          yaml:"-"`
+	// Intent is the CR request; Spec is the controller-resolved execution plan.
+	Intent          json.RawMessage `json:"-"          yaml:"-"`
+	PlanPending     bool            `json:"-"          yaml:"-"`
+	APIVersion      string          `json:"apiVersion" yaml:"apiVersion"`
+	Kind            string          `json:"kind"       yaml:"kind"`
+	ID              string          `json:"id"         yaml:"id"`
+	Generation      int64           `json:"generation" yaml:"generation"`
+	ResourceVersion string          `json:"-"          yaml:"-"`
 	// Backend is populated by the persistence adapter and is intentionally not
 	// serialized. It lets a routing store send updates to the same backend.
 	Backend string `json:"-" yaml:"-"`
@@ -1307,7 +1322,11 @@ func (s *Session) Transition(next Phase, message string, now time.Time) error {
 	backupTransition := (s.Spec.Type == SessionTypeBackup || s.Spec.Type == SessionTypeRestore) &&
 		((s.Status.Phase == PhasePlanned && next == PhaseWarmCopying) ||
 			(s.Status.Phase == PhaseWarmCopied && next == PhaseCompleted))
-	if !backupTransition && !slices.Contains(transitionPolicy[s.Status.Phase], next) {
+
+	unplannedAbort := s.PlanPending && next == PhaseAborted &&
+		(s.Status.Phase == PhasePlanned || s.Status.Phase == PhaseFailed)
+	if !backupTransition && !unplannedAbort &&
+		!slices.Contains(transitionPolicy[s.Status.Phase], next) {
 		return NewError(
 			ErrorConflict,
 			"transition",
@@ -1360,6 +1379,10 @@ func (s *Session) Reactivate(message string, now time.Time) error {
 		return NewError(ErrorPrecondition, "reactivate", "failed session has no resume checkpoint")
 	}
 
+	if err := s.ValidateRetryableFailure(); err != nil {
+		return err
+	}
+
 	t := metav1.NewTime(now.UTC())
 	s.Status.Phase = s.Status.ResumeFrom
 	s.Status.FailureReason = ""
@@ -1376,6 +1399,25 @@ func (s *Session) Reactivate(message string, now time.Time) error {
 	trimWorkflowHistory(&s.Status)
 
 	return nil
+}
+
+// ValidateRetryableFailure rejects failures that require a new execution plan.
+func (s *Session) ValidateRetryableFailure() error {
+	if s == nil || s.Status.Phase != PhaseFailed ||
+		s.Status.FailureReason != FailureDestinationCapacityExhausted {
+		return nil
+	}
+
+	message := "destination capacity was exhausted and cannot be changed in this session; abort and clean up this session, then create a new session with a larger --destination-capacity"
+	if kubeblocks, ok := s.Spec.KubeBlocksPodMigration(); ok {
+		message = fmt.Sprintf(
+			"destination capacity was exhausted for KubeBlocks Cluster %s component %s; update the component volumeClaimTemplates storage request, abort and clean up this session, then create a new migrate-pod session",
+			kubeblocks.Cluster,
+			kubeblocks.Component,
+		)
+	}
+
+	return NewError(ErrorConflict, "resume session", message)
 }
 
 func (s *Session) SetCondition(condition Condition) {
@@ -1455,6 +1497,34 @@ func (s *Session) VolumeStatus(name string) (*VolumeStatus, error) {
 func (s *Session) Validate() error {
 	if err := validateSessionHeader(s); err != nil {
 		return err
+	}
+
+	if err := ValidateReclaimPolicies(
+		s.Spec.SourcePVReclaimPolicy,
+		s.Spec.DestinationPVCReclaimPolicy,
+	); err != nil {
+		return err
+	}
+
+	if s.PlanPending {
+		if s.Backend != "crd" || len(s.Intent) == 0 {
+			return NewError(
+				ErrorValidation,
+				"session",
+				"pending planning requires a controller request",
+			)
+		}
+
+		switch s.Status.Phase {
+		case PhasePlanned, PhaseFailed, PhaseAborted:
+			return nil
+		default:
+			return NewError(
+				ErrorPrecondition,
+				"session",
+				"execution requires a persisted controller plan",
+			)
+		}
 	}
 
 	if err := validateSessionMode(s); err != nil {

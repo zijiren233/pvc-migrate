@@ -10,24 +10,26 @@ import (
 )
 
 type offlineMigrationFlags struct {
-	sessionID             string
-	sourceNamespace       string
-	temporaryNamespace    string
-	destinationNamespace  string
-	sourcePVCs            []string
-	destinationPVCs       []string
-	destinationCapacities []string
-	sourcePaths           []string
-	destinationPaths      []string
-	allowVolumeShrink     bool
-	skipSourceUsageCheck  bool
-	sourceNode            string
-	targetNode            string
-	destinationClass      string
-	capacityAwareness     string
-	strategies            []string
-	verifyChecksum        bool
-	deleteExtraneous      bool
+	sessionID                   string
+	sourceNamespace             string
+	temporaryNamespace          string
+	destinationNamespace        string
+	sourcePVCs                  []string
+	destinationPVCs             []string
+	destinationCapacities       []string
+	sourcePaths                 []string
+	destinationPaths            []string
+	allowVolumeShrink           bool
+	skipSourceUsageCheck        bool
+	sourceNode                  string
+	targetNode                  string
+	destinationClass            string
+	capacityAwareness           string
+	strategies                  []string
+	verifyChecksum              bool
+	deleteExtraneous            bool
+	sourcePVReclaimPolicy       string
+	destinationPVCReclaimPolicy string
 }
 
 func (f *offlineMigrationFlags) bind(command *cobra.Command) {
@@ -81,6 +83,18 @@ func (f *offlineMigrationFlags) bind(command *cobra.Command) {
 		"allow-volume-shrink",
 		false,
 		"Allow destination capacity below the source PV capacity; only use when copied data is known to fit",
+	)
+	flags.StringVar(
+		&f.sourcePVReclaimPolicy,
+		"source-pv-reclaim-policy",
+		string(domain.SourcePVReclaimRetain),
+		"Policy for the old source PV after migration: Retain or Delete",
+	)
+	flags.StringVar(
+		&f.destinationPVCReclaimPolicy,
+		"destination-pvc-reclaim-policy",
+		string(domain.DestinationPVCReclaimRetain),
+		"Destination storage policy on cleanup, including after rollback: Retain or Delete",
 	)
 	flags.BoolVar(
 		&f.skipSourceUsageCheck,
@@ -173,27 +187,29 @@ func (f *offlineMigrationFlags) planOptions(
 	}
 
 	return planner.OfflineMigrationOptions{
-		SessionID:             id,
-		SourceNamespace:       f.sourceNamespace,
-		TemporaryNamespace:    temporaryNamespace,
-		DestinationNamespace:  destinationNamespace,
-		SessionNamespace:      state.global.sessionNamespace,
-		StagingNamespace:      stagingNamespace,
-		ToolImage:             state.global.toolImage,
-		SourcePVCs:            append([]string(nil), f.sourcePVCs...),
-		DestinationPVCs:       append([]string(nil), f.destinationPVCs...),
-		DestinationCapacities: append([]string(nil), f.destinationCapacities...),
-		SourcePaths:           append([]string(nil), f.sourcePaths...),
-		DestinationPaths:      append([]string(nil), f.destinationPaths...),
-		AllowVolumeShrink:     f.allowVolumeShrink,
-		SkipSourceUsageCheck:  f.skipSourceUsageCheck,
-		SourceNode:            f.sourceNode,
-		TargetNode:            f.targetNode,
-		DestinationClass:      f.destinationClass,
-		CapacityAwareness:     domain.CapacityAwareness(f.capacityAwareness),
-		Strategies:            append([]string(nil), f.strategies...),
-		VerifyChecksum:        f.verifyChecksum,
-		DeleteExtraneous:      f.deleteExtraneous,
+		SessionID:                   id,
+		SourceNamespace:             f.sourceNamespace,
+		TemporaryNamespace:          temporaryNamespace,
+		DestinationNamespace:        destinationNamespace,
+		SessionNamespace:            state.global.sessionNamespace,
+		StagingNamespace:            stagingNamespace,
+		ToolImage:                   state.global.toolImage,
+		SourcePVCs:                  append([]string(nil), f.sourcePVCs...),
+		DestinationPVCs:             append([]string(nil), f.destinationPVCs...),
+		DestinationCapacities:       append([]string(nil), f.destinationCapacities...),
+		SourcePaths:                 append([]string(nil), f.sourcePaths...),
+		DestinationPaths:            append([]string(nil), f.destinationPaths...),
+		AllowVolumeShrink:           f.allowVolumeShrink,
+		SkipSourceUsageCheck:        f.skipSourceUsageCheck,
+		SourceNode:                  f.sourceNode,
+		TargetNode:                  f.targetNode,
+		DestinationClass:            f.destinationClass,
+		CapacityAwareness:           domain.CapacityAwareness(f.capacityAwareness),
+		Strategies:                  append([]string(nil), f.strategies...),
+		VerifyChecksum:              f.verifyChecksum,
+		DeleteExtraneous:            f.deleteExtraneous,
+		SourcePVReclaimPolicy:       f.sourcePVReclaimPolicy,
+		DestinationPVCReclaimPolicy: f.destinationPVCReclaimPolicy,
 	}, nil
 }
 
@@ -358,7 +374,8 @@ func (r *rootState) runOfflineMigrateCommand(
 	)
 	options.StagingNamespace = options.TemporaryNamespace
 
-	plan, err := runtime.planner.PlanOfflineMigration(ctx, options)
+	plan, err := runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+		PlanOfflineMigration(ctx, options)
 	if err != nil {
 		return reportPlanningError(cmd, err)
 	}

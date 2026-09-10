@@ -342,7 +342,7 @@ func controllerWaitTestObject(
 	object.SetGeneration(1)
 	object.SetResourceVersion("1")
 
-	if !setWorkflowStatus(object, session.Spec, session.Status) {
+	if !setWorkflowStatus(object, session.Spec, session.Status, true) {
 		t.Fatal("failed to set workflow status")
 	}
 

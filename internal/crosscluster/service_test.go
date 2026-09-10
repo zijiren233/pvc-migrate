@@ -1721,7 +1721,7 @@ func TestCleanupDeletesOnlyOwnedDestinationPVCAndReleasedPV(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := service.Cleanup(context.Background(), session, true, true); err != nil {
+	if err := service.Cleanup(context.Background(), session, "Delete", true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1752,7 +1752,7 @@ func TestCleanupDeletesOnlyOwnedDestinationPVCAndReleasedPV(t *testing.T) {
 	}
 }
 
-func TestCleanupCannotDeleteSessionWhileDestinationIsRecorded(t *testing.T) {
+func TestCleanupRetainDeletesSessionWithMissingRecordedDestination(t *testing.T) {
 	service, options, _ := crossFixture()
 
 	plan, err := service.Plan(context.Background(), options)
@@ -1770,12 +1770,12 @@ func TestCleanupCannotDeleteSessionWhileDestinationIsRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := service.Cleanup(context.Background(), session, false, true); err == nil {
-		t.Fatal("cleanup deleted a session while destination ownership was recorded")
+	if err := service.Cleanup(context.Background(), session, "Retain", true); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestCleanupCannotDeleteSessionWithUnrecordedDestinationPVC(t *testing.T) {
+func TestCleanupRetainsUnrecordedOwnedDestinationPVC(t *testing.T) {
 	service, options, _ := crossFixture()
 
 	plan, err := service.Plan(context.Background(), options)
@@ -1810,16 +1810,24 @@ func TestCleanupCannotDeleteSessionWithUnrecordedDestinationPVC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := service.Cleanup(context.Background(), session, false, true); err == nil {
-		t.Fatal("cleanup deleted a session while an unrecorded destination PVC existed")
+	if err := service.Cleanup(context.Background(), session, "Retain", true); err != nil {
+		t.Fatal(err)
 	}
 
 	if _, err := service.Get(
 		context.Background(),
 		options.SessionNamespace,
 		session.ID,
-	); err != nil {
-		t.Fatalf("cleanup removed the session despite the unrecorded destination PVC: %v", err)
+	); !apierrors.IsNotFound(err) {
+		t.Fatalf("session still exists: %v", err)
+	}
+
+	pvc, err := service.DestinationClientForTest().
+		CoreV1().
+		PersistentVolumeClaims("app").
+		Get(context.Background(), "data-copy", metav1.GetOptions{})
+	if err != nil || pvc.Labels[SessionKey] != "" {
+		t.Fatalf("retained PVC=%v err=%v", pvc, err)
 	}
 }
 

@@ -22,7 +22,7 @@ helm upgrade --install pvc-migrate \
   oci://ghcr.io/labring-sigs/pvc-migrate/charts/pvc-migrate \
   --version "$CHART_VERSION" --namespace pvc-migrate-system \
   --rollback-on-failure --wait --timeout 10m --history-max 10
-helm test pvc-migrate --namespace pvc-migrate-system --logs
+helm test pvc-migrate --namespace pvc-migrate-system --logs --timeout 10m
 ```
 
 Controller and tool images default to the selected chart version; image values
@@ -36,13 +36,15 @@ helm template pvc-migrate ./charts/pvc-migrate \
 helm upgrade --install pvc-migrate ./charts/pvc-migrate \
   --namespace pvc-migrate-system \
   --rollback-on-failure --wait --timeout 10m --history-max 10
-helm test pvc-migrate --namespace pvc-migrate-system --logs
+helm test pvc-migrate --namespace pvc-migrate-system --logs --timeout 10m
 ```
 
 For Helm 3, replace `--rollback-on-failure` with `--atomic`. Do not pass
 `--create-namespace`. A missing namespace fails installation. The readiness
 test has no API token and deletes its Pod after success; failed test Pods
-remain for diagnostics and are replaced by the next `helm test`.
+remain for diagnostics and are replaced by the next `helm test`. The test Pod's
+10-minute deadline includes scheduling and container startup; the readiness
+request itself has a 10-second timeout.
 
 ## Configuration
 
@@ -110,7 +112,7 @@ helm upgrade --install pvc-migrate ./charts/pvc-migrate \
 helm upgrade --install pvc-migrate ./charts/pvc-migrate \
   --namespace pvc-migrate-system --take-ownership --skip-crds \
   --wait --timeout 10m --history-max 10
-helm test pvc-migrate --namespace pvc-migrate-system --logs
+helm test pvc-migrate --namespace pvc-migrate-system --logs --timeout 10m
 ```
 
 With Helm 4, add `--server-side=false` to both adoption commands. This avoids
@@ -148,7 +150,7 @@ kubectl apply --server-side --field-manager=pvc-migrate-crds \
 helm upgrade pvc-migrate ./charts/pvc-migrate \
   --namespace pvc-migrate-system -f production-values.yaml \
   --rollback-on-failure --wait --timeout 10m --history-max 10
-helm test pvc-migrate --namespace pvc-migrate-system --logs
+helm test pvc-migrate --namespace pvc-migrate-system --logs --timeout 10m
 helm history pvc-migrate --namespace pvc-migrate-system
 ```
 

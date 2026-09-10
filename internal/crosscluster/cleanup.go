@@ -2,9 +2,9 @@ package crosscluster
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
+	"github.com/labring-sigs/pvc-migrate/internal/domain"
 	"github.com/labring-sigs/pvc-migrate/internal/kube"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -14,41 +14,33 @@ import (
 func (s *Service) Cleanup(
 	ctx context.Context,
 	session *Session,
-	deleteDestination, deleteSession bool,
+	destinationPolicy string,
+	deleteSession bool,
 ) error {
 	if s.store != nil {
 		return s.withLock(ctx, session, func(locked context.Context) error {
-			return s.cleanup(locked, session, deleteDestination, deleteSession)
+			return s.cleanup(locked, session, destinationPolicy, deleteSession)
 		})
 	}
 
-	return s.cleanup(ctx, session, deleteDestination, deleteSession)
+	return s.cleanup(ctx, session, destinationPolicy, deleteSession)
 }
 
 func (s *Service) cleanup(
 	ctx context.Context,
 	session *Session,
-	deleteDestination, deleteSession bool,
+	destinationPolicy string,
+	deleteSession bool,
 ) error {
-	if err := s.validateSession(ctx, session); err != nil {
+	if err := s.ValidateCleanup(ctx, session, destinationPolicy); err != nil {
 		return err
 	}
 
-	if deleteSession && !deleteDestination {
-		for i, volume := range session.Spec.Volumes {
-			status := session.Status.Volumes[i].Reservation
-			if volume.Destination.PVC.UID != "" || volume.Destination.PV.UID != "" ||
-				status.PVC.UID != "" || status.PV.UID != "" {
-				return errors.New(
-					"deleting a cross-cluster session with destination resources requires --delete-destination",
-				)
-			}
-
-			if err := s.rejectUnrecordedDestinationResources(ctx, session, i); err != nil {
-				return err
-			}
-		}
+	if destinationPolicy == "" {
+		destinationPolicy = session.Spec.DestinationPVCReclaimPolicy
 	}
+
+	deleteDestination := destinationPolicy == "Delete"
 
 	session.Status.Phase = PhaseCleaning
 	session.Status.Message = "cleaning cross-cluster resources"
@@ -75,6 +67,12 @@ func (s *Service) cleanup(
 				return err
 			}
 		}
+	} else {
+		for i := range session.Spec.Volumes {
+			if err := s.retainDestinationVolume(ctx, session, i); err != nil {
+				return err
+			}
+		}
 	}
 
 	session.Status.Phase = PhaseCleaned
@@ -97,54 +95,30 @@ func (s *Service) cleanup(
 	return s.save(ctx, session, false)
 }
 
-func (s *Service) rejectUnrecordedDestinationResources(
-	ctx context.Context,
-	session *Session,
-	index int,
-) error {
-	volume := &session.Spec.Volumes[index]
-	pvcs := s.destination.Kubernetes.CoreV1().
-		PersistentVolumeClaims(volume.Destination.PVC.Namespace)
-
-	_, err := pvcs.Get(ctx, volume.Destination.PVC.Name, metav1.GetOptions{})
-	if err == nil {
-		return fmt.Errorf(
-			"destination PVC %s/%s exists but its identity is not recorded; use --delete-destination after inspecting it",
-			volume.Destination.PVC.Namespace,
-			volume.Destination.PVC.Name,
-		)
+// ValidateCleanup checks policy, identities and consumers without changing the session.
+func (s *Service) ValidateCleanup(ctx context.Context, session *Session, policy string) error {
+	if err := s.validateSession(ctx, session); err != nil {
+		return err
 	}
 
-	if !apierrors.IsNotFound(err) {
-		return fmt.Errorf(
-			"inspect destination PVC %s/%s before deleting session: %w",
-			volume.Destination.PVC.Namespace,
-			volume.Destination.PVC.Name,
-			err,
-		)
+	if policy == "" {
+		policy = session.Spec.DestinationPVCReclaimPolicy
 	}
 
-	pvs, err := s.destination.Kubernetes.CoreV1().
-		PersistentVolumes().
-		List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf(
-			"inspect destination PVs before deleting session: %w",
-			err,
-		)
+	if err := domain.ValidateReclaimPolicies("", policy); err != nil {
+		return err
 	}
 
-	for _, pv := range pvs.Items {
-		claimRef := pv.Spec.ClaimRef
-		if claimRef != nil &&
-			claimRef.Namespace == volume.Destination.PVC.Namespace &&
-			claimRef.Name == volume.Destination.PVC.Name {
-			return fmt.Errorf(
-				"destination PV %s claims PVC %s/%s but its identity is not recorded; use --delete-destination after inspecting it",
-				pv.Name,
-				volume.Destination.PVC.Namespace,
-				volume.Destination.PVC.Name,
-			)
+	for i := range session.Spec.Volumes {
+		pvc, _, err := s.inspectCleanupDestination(ctx, session, i, policy == "Delete")
+		if err != nil {
+			return err
+		}
+
+		if policy == "Delete" && pvc != nil {
+			if err := s.validateCleanupConsumers(ctx, session, i, pvc); err != nil {
+				return err
+			}
 		}
 	}
 

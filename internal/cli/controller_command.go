@@ -63,6 +63,7 @@ func (r *rootState) newControllerCommand() *cobra.Command {
 				// inspect every tenant namespace. The normal manager path receives
 				// namespace/name directly from controller-runtime events.
 				return controller.NewRunner(runtime.service, runtime.controllerStore, "").
+					WithPlanner(runtime.planner.PlanWorkflow).
 					WithKubernetesClient(runtime.clients.Kubernetes).
 					WithControllerClient(runtime.clients.Runtime).
 					WithClusterIdentity(cluster.ID).
@@ -79,6 +80,7 @@ func (r *rootState) newControllerCommand() *cobra.Command {
 				runtime.service,
 				runtime.controllerStore,
 				controller.ManagerOptions{
+					Planner:                       runtime.planner.PlanWorkflow,
 					Namespace:                     r.global.controllerNamespace,
 					KubernetesClient:              runtime.clients.Kubernetes,
 					OpenEBSLVMSharedVolumeManager: runtime.openEBSLVMSharedVolumeManager,

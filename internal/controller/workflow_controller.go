@@ -37,6 +37,7 @@ import (
 // WorkflowReconciler bridges every operation-specific workflow Kind to the
 // existing service state machine.
 type WorkflowReconciler struct {
+	planner          WorkflowPlanner
 	store            kube.ControllerSessionStore
 	service          workflowResumer
 	kubeClient       kubernetes.Interface
@@ -243,7 +244,12 @@ func (r *WorkflowReconciler) reconcile(
 
 	ctx, cancel := context.WithCancel(ctx)
 
-	r.activeWorkflows.Store(session.BackendUID, cancel)
+	// Separate queues may observe the same workflow during a phase or spec
+	// change. Keep the running worker's cancellation handle until it exits.
+	if _, running := r.activeWorkflows.LoadOrStore(session.BackendUID, cancel); running {
+		cancel()
+		return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+	}
 	defer func() {
 		interrupted := errors.Is(ctx.Err(), context.Canceled)
 
@@ -286,21 +292,17 @@ func (r *WorkflowReconciler) reconcile(
 		return reconcile.Result{}, err
 	}
 
+	if session.PlanPending {
+		return r.reconcilePlanning(ctx, session)
+	}
+
 	// A workflow's spec is the authorization and execution input. Once the
 	// controller has observed a generation, changing that input would let a
 	// tenant retarget an in-flight operation (for example to another recovery
 	// point or backup repository). CRD status updates do not change
 	// generation, so this check does not interfere with normal progress.
 	if err := workflowSpecMutationError(session); err != nil {
-		if !terminalSession(session) {
-			runner := r.runner(request.Namespace)
-			return r.checkpointBusinessFailure(ctx, runner, session, err, request)
-		}
-
-		ctrl.LoggerFrom(ctx).
-			Info("ignored spec change for terminal workflow", "workflow", request.NamespacedName, "reason", err)
-
-		return reconcile.Result{}, nil
+		return r.reconcileChangedSpec(ctx, session, err, request)
 	}
 
 	// Declarative CRs do not pass through CRDSessionStore.Create, so they may
@@ -313,21 +315,11 @@ func (r *WorkflowReconciler) reconcile(
 
 	// Persist the controller-owned initial checkpoint before business execution.
 	if session.Status.ObservedGeneration == 0 {
-		if err := initializeUnobservedStatus(ctx, r.store, session); err != nil {
-			if domain.CategoryOf(err) == domain.ErrorConflict {
-				return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
-			}
-
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+		return r.reconcileInitialCheckpoint(ctx, session)
 	}
 
 	if terminalSession(session) {
-		// Explicit resume is admitted by workflowResumeStatusChanged. Failed
-		// workflows need no polling while waiting for that status update.
-		return reconcile.Result{}, nil
+		return r.reconcileTerminal(ctx, session)
 	}
 
 	if boundaryErr := kube.ControllerNamespaceBoundaryError(session); boundaryErr != nil {
@@ -363,6 +355,54 @@ func (r *WorkflowReconciler) reconcile(
 	}
 
 	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+}
+
+func (r *WorkflowReconciler) reconcileTerminal(
+	ctx context.Context,
+	session *domain.Session,
+) (reconcile.Result, error) {
+	// Policy edits are observed without scheduling business execution again.
+	if session.Generation != session.Status.ObservedGeneration {
+		return reconcile.Result{}, r.store.Update(ctx, session)
+	}
+	return reconcile.Result{}, nil
+}
+
+func (r *WorkflowReconciler) reconcileInitialCheckpoint(
+	ctx context.Context,
+	session *domain.Session,
+) (reconcile.Result, error) {
+	if err := initializeUnobservedStatus(ctx, r.store, session); err != nil {
+		if domain.CategoryOf(err) == domain.ErrorConflict {
+			return reconcile.Result{RequeueAfter: time.Second}, nil
+		}
+
+		return reconcile.Result{}, err
+	}
+
+	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+}
+
+func (r *WorkflowReconciler) reconcileChangedSpec(
+	ctx context.Context,
+	session *domain.Session,
+	cause error,
+	request reconcile.Request,
+) (reconcile.Result, error) {
+	if !terminalSession(session) {
+		return r.checkpointBusinessFailure(
+			ctx,
+			r.runner(request.Namespace),
+			session,
+			cause,
+			request,
+		)
+	}
+
+	ctrl.LoggerFrom(ctx).
+		Info("ignored spec change for terminal workflow", "workflow", request.NamespacedName, "reason", cause)
+
+	return reconcile.Result{}, nil
 }
 
 func (r *WorkflowReconciler) checkpointBusinessFailure(
@@ -410,6 +450,10 @@ func (r *WorkflowReconciler) reconcileDeletingWorkflow(
 ) error {
 	// Execution cannot start before the controller persists its first trusted
 	// checkpoint. Such objects need neither a Lease nor data-plane cleanup.
+	if session.PlanPending {
+		return r.deleteUnplannedWorkflow(ctx, session)
+	}
+
 	if session.Status.ObservedGeneration == 0 {
 		return r.store.Delete(ctx, session)
 	}
@@ -425,10 +469,10 @@ func (r *WorkflowReconciler) reconcileDeletingWorkflow(
 		return err
 	}
 
-	if err := workflowSpecMutationError(session); err != nil {
-		return err
-	}
-
+	// DecodeWorkflow uses the controller-owned status.plan once planning has
+	// completed. Later intent edits cannot retarget cleanup and must not strand
+	// the finalizer. The finalizer still revalidates identity and generation
+	// under its Lease before touching storage.
 	err := finalizer.FinalizeDeletedWorkflow(ctx, session)
 	if err == nil || kube.IsSessionLockContention(err) || ctx.Err() != nil {
 		return err
@@ -517,17 +561,22 @@ func (r *WorkflowReconciler) SetupWithManager(manager ctrl.Manager) error {
 			return fmt.Errorf("register %s informer: %w", kind, err)
 		}
 
-		// Recovery of a paused workload must not wait behind another long
-		// migration. Both queues share the informer and the session Lease fence.
-		for _, deleting := range []bool{false, true} {
-			name := "workflow-" + strings.ToLower(string(kind))
-			if deleting {
-				name += "-deletion"
-			}
+		// Interrupted cutovers and deletion must make progress while new
+		// transfers run. All queues share the informer and session Lease fence.
+		queues := []struct {
+			suffix string
+			filter predicate.Predicate
+		}{
+			{filter: workflowQueuePredicate(false, r.cancelWorkflow)},
+			{suffix: "-recovery", filter: workflowRecoveryQueuePredicate(r.cancelWorkflow)},
+			{suffix: "-deletion", filter: workflowQueuePredicate(true, r.cancelWorkflow)},
+		}
+		for _, queue := range queues {
+			name := "workflow-" + strings.ToLower(string(kind)) + queue.suffix
 
 			if err := ctrl.NewControllerManagedBy(manager).
 				Named(name).
-				For(object, builder.WithPredicates(workflowQueuePredicate(deleting, r.cancelWorkflow))).
+				For(object, builder.WithPredicates(queue.filter)).
 				Complete(&kindWorkflowReconciler{parent: r, kind: kind}); err != nil {
 				return err
 			}
@@ -555,9 +604,42 @@ func workflowQueuePredicate(deleting bool, onDelete func(crclient.Object)) predi
 	return predicate.And(
 		workflowEventPredicate(onDelete),
 		predicate.NewPredicateFuncs(func(object crclient.Object) bool {
-			return (object.GetDeletionTimestamp() != nil) == deleting
+			if object.GetDeletionTimestamp() != nil {
+				return deleting
+			}
+			return !deleting && !workflowNeedsRecovery(object)
 		}),
 	)
+}
+
+func workflowRecoveryQueuePredicate(onDelete func(crclient.Object)) predicate.Predicate {
+	return predicate.And(
+		workflowEventPredicate(onDelete),
+		predicate.NewPredicateFuncs(func(object crclient.Object) bool {
+			return object.GetDeletionTimestamp() == nil && workflowNeedsRecovery(object)
+		}),
+	)
+}
+
+func workflowNeedsRecovery(object crclient.Object) bool {
+	status := workflowStatus(object)
+
+	phase := domain.Phase(status.Phase)
+	if phase == domain.PhaseFailed {
+		// Failed workflows still require explicit resume. Routing their spec
+		// changes here also keeps workload restoration out of the transfer queue.
+		phase = domain.Phase(status.ResumeFrom)
+	}
+
+	switch phase {
+	case domain.PhasePausing, domain.PhasePaused, domain.PhaseFinalSyncing,
+		domain.PhaseFinalSynced, domain.PhaseActivating, domain.PhaseActivated,
+		domain.PhaseResuming, domain.PhaseRollingBack, domain.PhaseAborting,
+		domain.PhaseRenaming, domain.PhaseMoving:
+		return true
+	default:
+		return false
+	}
 }
 
 func workflowEventPredicate(onDelete ...func(crclient.Object)) predicate.Predicate {
@@ -637,6 +719,7 @@ func workflowStatus(object crclient.Object) v1alpha1.WorkflowStatus {
 }
 
 type ManagerOptions struct {
+	Planner                       WorkflowPlanner
 	Namespace                     string
 	KubernetesClient              kubernetes.Interface
 	OpenEBSLVMSharedVolumeManager kube.OpenEBSLVMSharedVolumeManager
@@ -772,6 +855,7 @@ func StartManager(
 	}
 
 	reconciler := NewWorkflowReconciler(service, store).
+		WithPlanner(options.Planner).
 		WithLogger(logger.With("component", "workflow-controller")).
 		// Repository reads use the uncached API reader so deletion, replacement,
 		// and credential changes fail closed immediately.
@@ -818,6 +902,13 @@ var (
 )
 
 func workflowSpecMutationError(session *domain.Session) error {
+	if session != nil && session.Status.ExecutionIntentHash != "" {
+		if session.Status.ExecutionIntentHash == domain.ExecutionIntentHash(session.Intent) {
+			return nil
+		}
+		return changedWorkflowSpecError()
+	}
+
 	if session == nil || session.Status.ObservedGeneration == 0 ||
 		session.Generation == session.Status.ObservedGeneration {
 		return nil
@@ -839,9 +930,36 @@ func workflowSpecMutationError(session *domain.Session) error {
 		}
 	}
 
+	return changedWorkflowSpecError()
+}
+
+func changedWorkflowSpecError() error {
 	return domain.NewError(
 		domain.ErrorConflict,
 		"controller reconcile",
 		"workflow spec changed after execution started; create a new workflow instead",
 	)
+}
+
+func (r *WorkflowReconciler) reconcilePlanning(
+	ctx context.Context,
+	session *domain.Session,
+) (reconcile.Result, error) {
+	if session.Status.Phase == domain.PhaseAborted ||
+		(terminalSession(session) && session.Status.ObservedGeneration == session.Generation) {
+		return reconcile.Result{}, nil
+	}
+
+	if err := r.store.EnsureSessionProtection(ctx, session); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	if err := r.planWorkflow(ctx, session); err != nil {
+		if kube.IsSessionLockContention(err) {
+			return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
+		}
+		return reconcile.Result{}, err
+	}
+
+	return reconcile.Result{RequeueAfter: r.requeueAfter}, nil
 }

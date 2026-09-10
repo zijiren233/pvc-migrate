@@ -12,24 +12,25 @@ import (
 )
 
 type Options struct {
-	SessionID               string
-	SessionNamespace        string
-	SourceNamespace         string
-	DestinationNamespace    string
-	SourcePVCs              []string
-	DestinationPVCs         []string
-	DestinationCapacities   []string
-	SourcePaths             []string
-	DestinationPaths        []string
-	DestinationStorageClass string
-	AllowVolumeShrink       bool
-	SkipSourceUsageCheck    bool
-	Online                  bool
-	VerifyChecksum          bool
-	DeleteExtraneous        bool
-	TargetNode              string
-	ToolImage               string
-	Strategies              []string
+	DestinationPVCReclaimPolicy string
+	SessionID                   string
+	SessionNamespace            string
+	SourceNamespace             string
+	DestinationNamespace        string
+	SourcePVCs                  []string
+	DestinationPVCs             []string
+	DestinationCapacities       []string
+	SourcePaths                 []string
+	DestinationPaths            []string
+	DestinationStorageClass     string
+	AllowVolumeShrink           bool
+	SkipSourceUsageCheck        bool
+	Online                      bool
+	VerifyChecksum              bool
+	DeleteExtraneous            bool
+	TargetNode                  string
+	ToolImage                   string
+	Strategies                  []string
 }
 
 type Service struct {

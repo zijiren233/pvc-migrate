@@ -244,6 +244,33 @@ func TestDeferControllerExecutionPrintsFailedSessionAndReturnsError(t *testing.T
 	}
 }
 
+func TestDeferControllerExecutionRejectsExhaustedCapacityBeforeReactivation(t *testing.T) {
+	session := controllerTestSession(domain.PhaseFailed, "destination ran out of space")
+	session.Status.ResumeFrom = domain.PhaseWarmCopying
+	session.Status.FailureReason = domain.FailureDestinationCapacityExhausted
+
+	before, err := json.Marshal(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A nil store also ensures rejection happens before any status write.
+	runtime := &commandRuntime{mode: executionModeController}
+
+	deferred, err := deferControllerExecution(t.Context(), &cobra.Command{}, runtime, session)
+	if !deferred || domain.CategoryOf(err) != domain.ErrorConflict {
+		t.Fatalf("deferred=%v error=%v", deferred, err)
+	}
+
+	after, err := json.Marshal(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(before, after) {
+		t.Fatal("rejected resume changed the failed checkpoint")
+	}
+}
+
 func TestDeferControllerExecutionDetachedDoesNotStartWaiter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -464,15 +491,18 @@ func TestAdoptReservedSessionBuildsCopyOwnedOptions(t *testing.T) {
 		},
 	)
 	session := domain.NewSession("reserved", spec, time.Now())
-	flags := &copyFlags{
-		sourceNode:       "source-a",
-		strategies:       []string{domain.StrategyMount},
-		online:           true,
-		verifyChecksum:   true,
-		deleteExtraneous: true,
+	flags := &copyFlags{}
+	cmd := &cobra.Command{}
+	flags.bind(cmd)
+
+	if err := cmd.ParseFlags([]string{
+		"--source-node=source-a", "--strategy=mount", "--online",
+		"--verify-checksum", "--delete-extraneous=true",
+	}); err != nil {
+		t.Fatal(err)
 	}
 
-	if err := adoptReservedSessionForCopy(session, flags); err != nil {
+	if err := adoptReservedSessionForCopy(cmd, session, flags); err != nil {
 		t.Fatal(err)
 	}
 

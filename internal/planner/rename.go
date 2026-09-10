@@ -81,6 +81,10 @@ func (p *Planner) planPVCIdentity(
 		options.DestinationPVC = options.SourcePVC
 	}
 
+	if p.requestOnly {
+		return p.identityIntentPlan(options)
+	}
+
 	p.logInfo(
 		"PVC identity planning started",
 		"operation",

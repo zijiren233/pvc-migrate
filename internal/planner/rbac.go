@@ -339,6 +339,11 @@ func (p *Planner) checkControllerSubmissionRBAC(
 	}
 
 	resource, ok := domain.ControllerResourceForSpec(spec)
+
+	if p.planningWorkflow {
+		return
+	}
+
 	if !ok {
 		plan.AddCheck(failed(domain.CheckNameRBAC, "workflow has no controller resource"))
 		return

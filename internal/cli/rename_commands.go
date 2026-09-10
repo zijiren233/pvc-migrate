@@ -51,12 +51,16 @@ func (r *rootState) newRenameCommand() *cobra.Command {
 			ctx, cancel := r.context(cmd.Context())
 			defer cancel()
 
-			plan, err := runtime.planner.PlanRenamePVC(ctx, planner.RenamePlanOptions{
-				SessionID: sessionID, SourceNamespace: sourceNamespace, SourcePVC: sourcePVC,
-				DestinationPVC: destinationPVC, SessionNamespace: r.controllerPlanSessionNamespace(
-					runtime, domain.SessionTypeRename, sourceNamespace, sourceNamespace,
-				),
-			})
+			plan, err := runtime.planner.ForSubmission(runtime.mode == executionModeController && !dryRun).
+				PlanRenamePVC(ctx, planner.RenamePlanOptions{
+					SessionID:       sessionID,
+					SourceNamespace: sourceNamespace,
+					SourcePVC:       sourcePVC,
+					DestinationPVC:  destinationPVC,
+					SessionNamespace: r.controllerPlanSessionNamespace(
+						runtime, domain.SessionTypeRename, sourceNamespace, sourceNamespace,
+					),
+				})
 			if err != nil {
 				return reportPlanningError(cmd, err)
 			}

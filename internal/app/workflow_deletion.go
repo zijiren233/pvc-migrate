@@ -129,17 +129,7 @@ func (s *Service) FinalizeDeletedWorkflow(ctx context.Context, session *domain.S
 			}
 		}
 
-		options := CleanupOptions{
-			DeleteTemporary: true,
-			DeleteRollback:  true,
-			Finalize:        true,
-			DeleteSession:   true,
-		}
-		if session.Spec.Operation() == domain.OperationCopy &&
-			session.Status.Phase == domain.PhaseWarmCopied {
-			options.DeleteTemporary = false
-			options.DeleteRollback = false
-		}
+		options := CleanupOptions{Finalize: true, DeleteSession: true}
 
 		return s.cleanup(ctx, session, options)
 	})
